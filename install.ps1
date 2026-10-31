@@ -15,7 +15,7 @@ Write-Host "==========================================================" -Foregro
 Write-Host "🚀 Installing Antigravity Dev Suite on Windows (AGY Standard)" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-# 1. Clean legacy / conflicting plugins
+# 1. Clean legacy / conflicting plugin stubs
 Write-Host "[1/5] Running legacy plugins cleanup & backup on Windows..." -ForegroundColor Yellow
 $CleanerScript = Join-Path $ScriptDir "scripts\clean_legacy_plugins.ps1"
 if (Test-Path $CleanerScript) {
@@ -63,7 +63,7 @@ if (Test-Path $TargetPluginDir) {
 New-Item -ItemType Junction -Path $TargetPluginDir -Target $ScriptDir -Force | Out-Null
 Write-Host "  ✔ Linked plugin -> $TargetPluginDir" -ForegroundColor Green
 
-# Enable plugin in config.json
+# Enable plugin in config.json using BOM-less UTF-8 encoding
 Write-Host "  Registering plugin in config.json..." -ForegroundColor Yellow
 try {
     if (Test-Path $ConfigFile) {
@@ -79,8 +79,9 @@ try {
     } else {
         $json.plugins."antigravity-dev-suite".enabled = $true
     }
-    $json | ConvertTo-Json -Depth 10 | Set-Content -Path $ConfigFile -Encoding UTF8
-    Write-Host "  ✔ Plugin enabled in config.json" -ForegroundColor Green
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($ConfigFile, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
+    Write-Host "  ✔ Plugin enabled in config.json (BOM-less UTF-8)" -ForegroundColor Green
 } catch {
     Write-Host "  ⚠ Could not parse config.json. Antigravity will load plugin by default." -ForegroundColor Gray
 }

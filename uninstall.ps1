@@ -26,14 +26,15 @@ if (Test-Path $ConfigFile) {
         $json = Get-Content -Raw -Path $ConfigFile | ConvertFrom-Json
         if ($json.plugins."antigravity-dev-suite") {
             $json.plugins."antigravity-dev-suite".enabled = $false
-            $json | ConvertTo-Json -Depth 10 | Set-Content -Path $ConfigFile -Encoding UTF8
-            Write-Host "[-] Disabled plugin in config.json" -ForegroundColor Green
+            $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+            [System.IO.File]::WriteAllText($ConfigFile, ($json | ConvertTo-Json -Depth 10), $utf8NoBom)
+            Write-Host "[-] Disabled plugin in config.json (BOM-less UTF-8)" -ForegroundColor Green
         }
     } catch {}
 }
 
-# 3. Clean global legacy rules if present
-$rulesToClean = @("claude_discipline.md", "visual_qa_mandate.md", "AGENTS.md")
+# 3. Clean legacy rule stubs if any
+$rulesToClean = @("claude_discipline.md", "visual_qa_mandate.md")
 foreach ($rule in $rulesToClean) {
     $rulePath = Join-Path $ConfigDir "rules\$rule"
     if (Test-Path $rulePath) {

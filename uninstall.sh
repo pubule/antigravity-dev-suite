@@ -8,6 +8,7 @@ GEMINI_HOME="${HOME}/.gemini"
 CONFIG_DIR="${GEMINI_HOME}/config"
 PLUGINS_DIR="${CONFIG_DIR}/plugins"
 TARGET_PLUGIN_DIR="${PLUGINS_DIR}/antigravity-dev-suite"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
 
 echo "=== Uninstalling Antigravity Dev Suite ==="
 
@@ -17,9 +18,25 @@ if [ -L "${TARGET_PLUGIN_DIR}" ] || [ -d "${TARGET_PLUGIN_DIR}" ]; then
   echo "[-] Removed plugin link: ${TARGET_PLUGIN_DIR}"
 fi
 
-# 2. Clean unbundled rules and agents if any
-rm -f "${CONFIG_DIR}/rules/claude_discipline.md" "${CONFIG_DIR}/rules/visual_qa_mandate.md" "${CONFIG_DIR}/rules/AGENTS.md"
-rm -f "${CONFIG_DIR}/agents/claude-critic.json" "${CONFIG_DIR}/agents/visual-qa-critic.json"
-rm -f "${CONFIG_DIR}/agents/claude-critic.md" "${CONFIG_DIR}/agents/visual-qa-critic.md" "${CONFIG_DIR}/agents/opus-architect.md"
+# 2. Disable plugin in config.json
+if [ -f "${CONFIG_FILE}" ]; then
+  python3 -c "
+import json, sys
+cfg_path = sys.argv[1]
+try:
+    with open(cfg_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if 'plugins' in data and 'antigravity-dev-suite' in data['plugins']:
+        data['plugins']['antigravity-dev-suite']['enabled'] = False
+    with open(cfg_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+except Exception:
+    pass
+" "${CONFIG_FILE}" 2>/dev/null || true
+  echo "[-] Disabled plugin in config.json"
+fi
+
+# 3. Clean legacy rule stubs if any
+rm -f "${CONFIG_DIR}/rules/claude_discipline.md" "${CONFIG_DIR}/rules/visual_qa_mandate.md"
 
 echo "=== Antigravity Dev Suite uninstalled successfully. ==="

@@ -1,7 +1,7 @@
 # 🧠 Project Quality Directives & Standards (Claude Opus 5.5 + ASD-STE100)
 
 This repository follows the **Antigravity Dev Suite** engineering standards:
-- **Core Directives**: Defined in [`.agents/rules/AGENTS.md`](file:///.agents/rules/AGENTS.md)
+- **Core Directives**: Defined in [`.agents/rules/AGENTS.md`](.agents/rules/AGENTS.md)
 - **Technical Communication**: ASD-STE100 (concise, active voice, imperative mood, zero fluff).
 - **Architecture**: KISS and YAGNI (simplest working design, no premature abstractions).
 - **Development**: Strict Test-Driven Development (RED -> GREEN -> IMPROVE).

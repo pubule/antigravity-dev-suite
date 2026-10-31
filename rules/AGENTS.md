@@ -64,11 +64,15 @@ Follow the Red-Green-Improve cycle for all logic, features, and bug fixes:
 
 ---
 
-## 6. Autonomous Self-Healing & Closed-Loop Auto-Debug
-- When a build, test, lint, or typecheck error occurs:
-  1. Autonomously analyze the stacktrace and error log at the AST and semantic level.
-  2. Pinpoint the root cause—do not apply superficial patches or guess.
-  3. Apply minimal surgical edits and re-verify immediately (up to 3 autonomous cycles) before asking the user.
+## 6. Autonomous Self-Healing & Closed-Loop Verification
+- **Auto-Debug Cycle**:
+  1. Autonomously analyze test failures and stacktraces at the AST and semantic level.
+  2. Pinpoint root causes without guessing or superficial patches.
+  3. Apply minimal surgical edits and re-verify immediately until 100% green.
+- **Adversarial Audit & Fix Loop (`/opus-dev`)**:
+  1. After implementing code and passing tests, invoke `claude-critic` to audit against the 7 Opus pillars.
+  2. If the critic reports defects (status `RETRY`), autonomously apply surgical fixes and re-verify.
+  3. Repeat the audit and fix cycle until the critic returns a clean `PASS` with 0 defects.
 
 ---
 

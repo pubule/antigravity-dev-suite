@@ -1,6 +1,6 @@
 {
   "name": "antigravity-dev-suite",
-  "version": "1.5.1",
+  "version": "1.7.0",
   "description": "Enterprise Claude Opus 5.5 Coding Standard, ASD-STE100 Technical Communication & Cross-Platform Suite for Antigravity (macOS, Linux, Windows 10/11): Brainstorming, Planning, Strict TDD, Self-Healing Auto-Debug, Adversarial Code Review, Safe Refactoring, and Dual-Viewport Playwright Visual QA.",
   "displayName": "Antigravity Dev Suite",
   "suggestedPrompts": [

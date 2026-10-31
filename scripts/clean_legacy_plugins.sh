@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Antigravity Legacy Plugins & Redundant Rules Cleaner (macOS & Linux)
+# Safe, idempotent cleaner with automatic backup.
 # ==============================================================================
 set -euo pipefail
 
@@ -24,51 +25,25 @@ if [ -f "${CONFIG_FILE}" ]; then
   echo "[+] Backed up config.json -> ${CONFIG_FILE}.bak-${BACKUP_TIMESTAMP}"
 fi
 
-# 2. Disable conflicting/redundant plugins in config.json via Python or jq
-if [ -f "${CONFIG_FILE}" ]; then
-  if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
-    "${PYTHON_BIN}" -c "
-import json, sys
-cfg_path = sys.argv[1]
-try:
-    with open(cfg_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-except Exception:
-    data = {}
-plugins = data.setdefault('plugins', {})
-for legacy in ['ponytail', 'superpowers', 'skill-anything', 'opencode-agy']:
-    if legacy in plugins:
-        if isinstance(plugins[legacy], dict):
-            plugins[legacy]['enabled'] = False
-        else:
-            plugins[legacy] = {'enabled': False}
-try:
-    with open(cfg_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2)
-except Exception:
-    pass
-" "${CONFIG_FILE}" 2>/dev/null || true
-    echo "[+] Disabled conflicting plugins (ponytail, superpowers, skill-anything, opencode-agy) in config.json"
-  fi
-fi
-
-# 3. Clean up conflicting plugin symlinks
-PLUGINS_TO_REMOVE=("ponytail" "skill-anything" "opencode-agy")
-for plugin in "${PLUGINS_TO_REMOVE[@]}"; do
-  PLUGIN_PATH="${PLUGINS_DIR}/${plugin}"
-  if [ -L "${PLUGIN_PATH}" ]; then
-    rm -f "${PLUGIN_PATH}" 2>/dev/null || true
-    echo "[-] Removed legacy plugin link: ${PLUGIN_PATH}"
-  fi
-done
-
-# 4. Clean up legacy unbundled rule files
+# 2. Clean up legacy unbundled rule stubs if they exist
 for old_rule in "claude_discipline.md" "visual_qa_mandate.md"; do
   OLD_RULE_PATH="${GEMINI_CONFIG_DIR}/rules/${old_rule}"
   if [ -f "${OLD_RULE_PATH}" ]; then
     rm -f "${OLD_RULE_PATH}" 2>/dev/null || true
-    echo "[-] Removed legacy unbundled rule: ${OLD_RULE_PATH}"
+    echo "[-] Cleaned legacy unbundled rule: ${OLD_RULE_PATH}"
   fi
 done
+
+# 3. Handle legacy dangling symlinks if requested
+if [ "${1:-}" = "--clean-all" ]; then
+  PLUGINS_TO_REMOVE=("ponytail" "skill-anything" "opencode-agy")
+  for plugin in "${PLUGINS_TO_REMOVE[@]}"; do
+    PLUGIN_PATH="${PLUGINS_DIR}/${plugin}"
+    if [ -L "${PLUGIN_PATH}" ]; then
+      rm -f "${PLUGIN_PATH}" 2>/dev/null || true
+      echo "[-] Removed legacy plugin link: ${PLUGIN_PATH}"
+    fi
+  done
+fi
 
 echo "=== [2/3] Legacy Cleanup Completed Successfully ==="
