@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.sh",
+            "command": "bash ./scripts/auto_debug_runner.sh",
             "timeout": 15
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.sh",
+            "command": "bash ./scripts/auto_debug_runner.sh",
             "timeout": 15
           }
         ]

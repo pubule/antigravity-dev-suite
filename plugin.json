@@ -1,29 +1,11 @@
 {
   "name": "antigravity-dev-suite",
-  "version": "1.0.0",
-  "description": "Enterprise Development Suite for Antigravity & Gemini: Hybrid Auto-Debug, Playwright Multimodal Visual QA (Desktop + Mobile 375px), Claude-Discipline and Autonomous Critic Loops.",
-  "author": "Fabio Stocco",
-  "license": "UNLICENSED",
-  "rules": [
-    "rules/claude_discipline.md",
-    "rules/visual_qa_mandate.md"
-  ],
-  "agents": [
-    "agents/claude-critic.json",
-    "agents/visual-qa-critic.json"
-  ],
-  "hooks": "hooks/hooks.json",
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@playwright/mcp-server",
-        "--headless"
-      ],
-      "env": {
-        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
-      }
-    }
-  }
+  "version": "1.1.0",
+  "description": "Enterprise Development Suite for Antigravity: Hybrid Auto-Debug, Playwright Multimodal Visual QA (Desktop + Mobile 375px), Claude-Discipline and Autonomous Critic Loops.",
+  "displayName": "Antigravity Dev Suite",
+  "suggestedPrompts": [
+    "Run Playwright dual-viewport visual QA on the frontend",
+    "Execute strict Claude-discipline review and TDD cycle",
+    "Run full self-healing auto-debug loop"
+  ]
 }

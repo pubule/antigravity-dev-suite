@@ -13,7 +13,7 @@ AGENTS_DIR="${CONFIG_DIR}/agents"
 TARGET_PLUGIN_DIR="${PLUGINS_DIR}/antigravity-dev-suite"
 
 echo "=========================================================="
-echo "🚀 Installing Antigravity Dev Suite (Hybrid A+B+C Engine)"
+echo "🚀 Installing Antigravity Dev Suite (AGY Native Standard)"
 echo "=========================================================="
 
 # 1. Clean legacy / conflicting plugins
@@ -42,11 +42,8 @@ echo "[4/6] Linking Antigravity Dev Suite plugin..."
 rm -rf "${TARGET_PLUGIN_DIR}"
 ln -sf "${SCRIPT_DIR}" "${TARGET_PLUGIN_DIR}"
 
-# Copy active rules and agents into global config for immediate discovery
-cp -f "${SCRIPT_DIR}/rules/"*.md "${RULES_DIR}/" 2>/dev/null || true
-cp -f "${SCRIPT_DIR}/agents/"*.json "${AGENTS_DIR}/" 2>/dev/null || true
-cp -f "${SCRIPT_DIR}/scripts/"* "${CONFIG_DIR}/scripts/" 2>/dev/null || true
-cp -f "${SCRIPT_DIR}/hooks/hooks.json" "${CONFIG_DIR}/hooks.json" 2>/dev/null || true
+# Ensure permissions
+chmod +x "${SCRIPT_DIR}/scripts/"*.sh "${SCRIPT_DIR}/scripts/"*.py 2>/dev/null || true
 
 # 5. Enable plugin in config.json
 echo "[5/6] Registering plugin in config.json..."
@@ -63,10 +60,4 @@ python3 "${SCRIPT_DIR}/scripts/visual_qa.py" --test-mode
 echo ""
 echo "=========================================================="
 echo "✅ Antigravity Dev Suite successfully installed!"
-echo "=========================================================="
-echo "Active Capabilities:"
-echo " • Strict Claude-Discipline & CoT Adversarial Reasoning"
-echo " • Automatic Test & Auto-Debug Loop on code edits"
-echo " • Playwright Visual QA (Desktop 1280x800 + Mobile 375px)"
-echo " • claude-critic & visual-qa-critic Subagents ready"
 echo "=========================================================="
