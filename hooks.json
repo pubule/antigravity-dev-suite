@@ -3,21 +3,11 @@
     "enabled": true,
     "PostToolUse": [
       {
-        "matcher": "write_file",
+        "matcher": "write_file|edit_file",
         "hooks": [
           {
             "type": "command",
-            "command": "py -3 scripts/auto_debug_runner.py || python3 scripts/auto_debug_runner.py || python scripts/auto_debug_runner.py",
-            "timeout": 15
-          }
-        ]
-      },
-      {
-        "matcher": "edit_file",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "py -3 scripts/auto_debug_runner.py || python3 scripts/auto_debug_runner.py || python scripts/auto_debug_runner.py",
+            "command": "python3 -c \"import sys,os,runpy,pathlib; d=[os.environ.get(k) for k in ('ANTIGRAVITY_DEV_SUITE_PATH','GEMINI_HOME','ANTIGRAVITY_HOME','USERPROFILE') if os.environ.get(k)]; p=[pathlib.Path(x)/('scripts/auto_debug_runner.py' if 'antigravity-dev-suite' in x else 'config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py') for x in d]+[pathlib.Path.home()/'.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.home()/'.agents/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.home()/'.gemini/antigravity-cli/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.cwd()/'scripts/auto_debug_runner.py']; f=next((x for x in p if x.is_file()),None); runpy.run_path(str(f),run_name='__main__') if f else sys.stdout.write('{}')\" || py -3 -c \"import sys,os,runpy,pathlib; d=[os.environ.get(k) for k in ('ANTIGRAVITY_DEV_SUITE_PATH','GEMINI_HOME','ANTIGRAVITY_HOME','USERPROFILE') if os.environ.get(k)]; p=[pathlib.Path(x)/('scripts/auto_debug_runner.py' if 'antigravity-dev-suite' in x else 'config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py') for x in d]+[pathlib.Path.home()/'.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.home()/'.agents/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.home()/'.gemini/antigravity-cli/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.cwd()/'scripts/auto_debug_runner.py']; f=next((x for x in p if x.is_file()),None); runpy.run_path(str(f),run_name='__main__') if f else sys.stdout.write('{}')\" || python -c \"import sys,os,runpy,pathlib; d=[os.environ.get(k) for k in ('ANTIGRAVITY_DEV_SUITE_PATH','GEMINI_HOME','ANTIGRAVITY_HOME','USERPROFILE') if os.environ.get(k)]; p=[pathlib.Path(x)/('scripts/auto_debug_runner.py' if 'antigravity-dev-suite' in x else 'config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py') for x in d]+[pathlib.Path.home()/'.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.home()/'.agents/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.home()/'.gemini/antigravity-cli/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py',pathlib.Path.cwd()/'scripts/auto_debug_runner.py']; f=next((x for x in p if x.is_file()),None); runpy.run_path(str(f),run_name='__main__') if f else sys.stdout.write('{}')\"",
             "timeout": 15
           }
         ]

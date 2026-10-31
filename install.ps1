@@ -19,7 +19,7 @@ Write-Host "==========================================================" -Foregro
 Write-Host "[1/5] Running legacy plugins cleanup & backup on Windows..." -ForegroundColor Yellow
 $CleanerScript = Join-Path $ScriptDir "scripts\clean_legacy_plugins.ps1"
 if (Test-Path $CleanerScript) {
-    & powershell.exe -ExecutionPolicy Bypass -File $CleanerScript
+    & $CleanerScript
 }
 
 # 2. Ensure Antigravity directory structure exists

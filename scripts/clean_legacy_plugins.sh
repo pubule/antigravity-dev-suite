@@ -34,14 +34,14 @@ for old_rule in "claude_discipline.md" "visual_qa_mandate.md"; do
   fi
 done
 
-# 3. Handle legacy dangling symlinks if requested
+# 3. Handle legacy dangling symlinks and directories if requested
 if [ "${1:-}" = "--clean-all" ]; then
   PLUGINS_TO_REMOVE=("ponytail" "skill-anything" "opencode-agy")
   for plugin in "${PLUGINS_TO_REMOVE[@]}"; do
     PLUGIN_PATH="${PLUGINS_DIR}/${plugin}"
-    if [ -L "${PLUGIN_PATH}" ]; then
-      rm -f "${PLUGIN_PATH}" 2>/dev/null || true
-      echo "[-] Removed legacy plugin link: ${PLUGIN_PATH}"
+    if [ -L "${PLUGIN_PATH}" ] || [ -d "${PLUGIN_PATH}" ]; then
+      rm -rf "${PLUGIN_PATH}" 2>/dev/null || true
+      echo "[-] Removed legacy plugin target: ${PLUGIN_PATH}"
     fi
   done
 fi

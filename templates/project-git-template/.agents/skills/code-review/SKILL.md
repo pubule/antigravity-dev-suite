@@ -61,3 +61,20 @@ If 100% clean:
 - All 4 passes verified successfully (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Strict Typing).
 - 0 vulnerabilities, 0 memory leaks, 0 over-engineered abstractions detected.
 ```
+
+---
+
+## ⚡ Pre-Flight Automated Audit (`critic_loop.py`)
+
+Execute deterministic checks before invoking the `claude-critic` subagent:
+
+```bash
+# Run full static audit across target directory
+python3 scripts/critic_loop.py --mode all --target .
+
+# Run security and secret scan only
+python3 scripts/critic_loop.py --mode security --target .
+
+# Run syntax and bracket balance scan only
+python3 scripts/critic_loop.py --mode syntax --target .
+```

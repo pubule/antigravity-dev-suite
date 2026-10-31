@@ -26,7 +26,7 @@ cfg_path = sys.argv[1]
 try:
     with open(cfg_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    if 'plugins' in data and 'antigravity-dev-suite' in data['plugins']:
+    if isinstance(data.get('plugins'), dict) and isinstance(data['plugins'].get('antigravity-dev-suite'), dict):
         data['plugins']['antigravity-dev-suite']['enabled'] = False
     with open(cfg_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)

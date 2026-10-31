@@ -52,6 +52,7 @@ flowchart TD
   - Re-verify in a closed loop (up to 3 autonomous cycles) until 100% green.
 
 ### Phase 5: Adversarial Audit & Self-Healing Loop (`claude-critic`, `visual-qa`)
+- **Pre-Flight Static Audit**: Execute `python3 scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, and exposed secrets before invoking review.
 - **Adversarial Audit**: Invoke `claude-critic` across the 7 Opus pillars (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Type Safety, Boundary Conditions).
 - **Frontend / UI**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and review via `visual-qa-critic`.
 - **Closed-Loop Resolution**:

@@ -7,8 +7,10 @@ Compatible with Windows 10/11, macOS, and Linux.
 
 import sys
 import os
+import re
 import ast
 import json
+import glob
 import argparse
 import subprocess
 from pathlib import Path
@@ -25,8 +27,20 @@ except ImportError:
     validate_code_file = validator_core.validate_code_file
     find_source_files = validator_core.find_source_files
 
-def audit_code_logic(target: str, test_mode: bool = False) -> dict:
-    """Audits code syntax, structural integrity, and potential defect patterns."""
+try:
+    from auto_debug_runner import get_last_syntax_error, clear_last_syntax_error
+except ImportError:
+    get_last_syntax_error = lambda: None
+    clear_last_syntax_error = lambda: False
+
+SECRET_PATTERNS = [
+    (re.compile(r'\b(?:sk-[a-zA-Z0-9_\-]{20,}|ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{50,}|glpat-[a-zA-Z0-9_\-]{20,}|xox[baprs]-[0-9a-zA-Z]{10,48}|sk_live_[0-9a-zA-Z]{24,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b'), "API key / token"),
+    (re.compile(r'(?i)aws_secret_access_key\s*[:=]\s*[\'"]?[A-Za-z0-9/+=]{40}[\'"]?'), "AWS Secret Access Key"),
+    (re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'), "Private Key"),
+]
+
+def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all") -> dict:
+    """Audits code syntax, structural integrity, OWASP security, and hygiene defect patterns."""
     logic_report = {
         "status": "PASS",
         "violations": [],
@@ -45,25 +59,115 @@ def audit_code_logic(target: str, test_mode: bool = False) -> dict:
             logic_report["suggested_fixes"].append("Fix syntax in synthetic generator")
         return logic_report
 
-    target_path = Path(target).resolve()
-    if not target_path.exists():
-        logic_report["status"] = "RETRY"
-        logic_report["violations"].append(f"Target path does not exist: {target}")
-        logic_report["suggested_fixes"].append("Provide a valid file or directory path")
-        return logic_report
-
-    if target_path.is_file():
-        files_to_check = [target_path]
+    # Disambiguate HTTP URLs, empty targets, globs, and comma-separated targets
+    if not target or target.startswith("http://") or target.startswith("https://") or target.startswith("localhost:") or target.startswith("127.0.0.1:"):
+        raw_targets = [str(Path.cwd())]
     else:
-        files_to_check = find_source_files(target_path)
+        raw_targets = [t.strip() for t in target.split(",") if t.strip()]
+
+    files_to_check: list[Path] = []
+    seen_files: set[Path] = set()
+
+    for item in raw_targets:
+        if any(char in item for char in ["*", "?", "["]):
+            matched = glob.glob(os.path.expanduser(item), recursive=True)
+            if not matched:
+                logic_report["status"] = "RETRY"
+                logic_report["violations"].append(f"No files matched glob pattern: {item}")
+                logic_report["suggested_fixes"].append("Check pattern expression")
+            for m in matched:
+                mp = Path(m).resolve()
+                if mp.is_file() and mp not in seen_files:
+                    seen_files.add(mp)
+                    files_to_check.append(mp)
+                elif mp.is_dir():
+                    for f in find_source_files(mp):
+                        if f not in seen_files:
+                            seen_files.add(f)
+                            files_to_check.append(f)
+            continue
+
+        target_path = Path(item).expanduser().resolve()
+        if not target_path.exists():
+            logic_report["status"] = "RETRY"
+            logic_report["violations"].append(f"Target path does not exist: {item}")
+            logic_report["suggested_fixes"].append("Provide a valid file or directory path")
+            continue
+
+        if target_path.is_file():
+            if target_path not in seen_files:
+                seen_files.add(target_path)
+                files_to_check.append(target_path)
+        else:
+            for f in find_source_files(target_path):
+                if f not in seen_files:
+                    seen_files.add(f)
+                    files_to_check.append(f)
+
+    check_syntax = submode in ["all", "logic", "syntax"]
+    check_security = submode in ["all", "logic", "security"]
 
     for file in files_to_check:
-        errs = validate_code_file(file)
-        if errs:
-            logic_report["status"] = "RETRY"
-            for err in errs:
-                logic_report["violations"].append(err)
-                logic_report["suggested_fixes"].append(f"Fix syntax/delimiter defect in {file.name}")
+        if check_syntax:
+            errs = validate_code_file(file)
+            if errs:
+                logic_report["status"] = "RETRY"
+                for err in errs:
+                    logic_report["violations"].append(err)
+                    logic_report["suggested_fixes"].append(f"Fix syntax/delimiter defect in {file.name}")
+
+        # Security and hygiene checks
+        if check_security:
+            try:
+                with open(file, "r", encoding="utf-8", errors="replace") as fc:
+                    content = fc.read()
+
+                # 1. OWASP Top 10 Hardcoded Secret Scan
+                for pat, desc in SECRET_PATTERNS:
+                    if pat.search(content):
+                        logic_report["status"] = "RETRY"
+                        logic_report["violations"].append(f"SecurityViolation in {file.name}: potential hardcoded secret detected ({desc})")
+                        logic_report["suggested_fixes"].append("Extract secret into secure environment variable")
+
+                # 2. Defensive Engineering: Empty Exception Block Detection in Python
+                if file.suffix in [".py", ".pyi"]:
+                    try:
+                        tree = ast.parse(content, filename=str(file))
+                        for node in ast.walk(tree):
+                            if isinstance(node, ast.ExceptHandler):
+                                if len(node.body) == 1:
+                                    stmt = node.body[0]
+                                    is_pass = isinstance(stmt, ast.Pass)
+                                    is_ellipsis = (
+                                        isinstance(stmt, ast.Expr)
+                                        and isinstance(stmt.value, ast.Constant)
+                                        and stmt.value.value is Ellipsis
+                                    )
+                                    if is_pass or is_ellipsis:
+                                        logic_report["status"] = "RETRY"
+                                        action_word = "pass" if is_pass else "..."
+                                        logic_report["violations"].append(f"EmptyExceptionHandling in {file.name}: empty 'except' block with {action_word} at line {node.lineno}")
+                                        logic_report["suggested_fixes"].append("Handle exception or log with contextual details")
+                    except Exception as ast_err:
+                        logic_report["details"][f"{file.name}_ast_notice"] = str(ast_err)
+            except Exception as read_err:
+                logic_report["details"][f"{file.name}_read_notice"] = str(read_err)
+
+    # 3. Check for any unresolved syntax errors cached from PostToolUse hooks
+    if check_syntax:
+        last_diag = get_last_syntax_error()
+        if last_diag and isinstance(last_diag.get("errors"), list) and last_diag.get("errors"):
+            diag_file_str = last_diag.get("file", "")
+            diag_path = Path(diag_file_str).resolve() if diag_file_str else None
+            if diag_path and (diag_path in files_to_check or not target or diag_file_str == target or str(diag_path) == str(Path(target).resolve())):
+                for err in last_diag["errors"]:
+                    if err not in logic_report["violations"]:
+                        logic_report["status"] = "RETRY"
+                        logic_report["violations"].append(err)
+                        logic_report["suggested_fixes"].append(f"Fix recorded syntax defect in {diag_path.name}")
+
+    if logic_report["status"] == "PASS" and check_syntax:
+        clear_last_syntax_error()
 
     return logic_report
 
@@ -90,6 +194,7 @@ def audit_visual_qa(target: str, test_mode: bool = False) -> dict:
             cmd,
             capture_output=True,
             text=True,
+            timeout=45,
             check=False
         )
         if res.stdout:
@@ -111,6 +216,10 @@ def audit_visual_qa(target: str, test_mode: bool = False) -> dict:
                     visual_report["warnings"].extend(qa_data["warnings"])
             except json.JSONDecodeError:
                 visual_report["warnings"].append(f"Unparseable stdout from visual QA runner: {res.stdout.strip()}")
+    except subprocess.TimeoutExpired:
+        visual_report["status"] = "RETRY"
+        visual_report["violations"].append(f"VisualQATimeout: visual QA runner timed out after 45s on target {target}")
+        visual_report["suggested_fixes"].append("Ensure target web server responds within timeout limit")
     except Exception as e:
         visual_report["warnings"].append(f"Critic execution error: {str(e)}")
 
@@ -126,8 +235,8 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
     }
 
     # 1. Logic & AST Critique
-    if mode in ["logic", "all"]:
-        logic_res = audit_code_logic(target, test_mode=test_mode)
+    if mode in ["logic", "all", "syntax", "security"]:
+        logic_res = audit_code_logic(target, test_mode=test_mode, submode=mode)
         if logic_res["status"] == "RETRY":
             report["status"] = "RETRY"
         report["violations"].extend(logic_res["violations"])
@@ -151,13 +260,15 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Critic Loop Runner (Claude Opus 5.5 Standard)")
-    parser.add_argument("--mode", choices=["logic", "visual", "all"], default="all", help="Critic evaluation mode")
+    parser.add_argument("--mode", choices=["logic", "visual", "syntax", "security", "all"], default="all", help="Critic evaluation mode")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
-    parser.add_argument("target", nargs="?", default="", help="File or directory target")
+    parser.add_argument("--target", dest="target_flag", default=None, help="Target file or directory (flag form)")
+    parser.add_argument("target", nargs="?", default="", help="File or directory target (positional)")
 
     args = parser.parse_args()
-    is_test = args.test_mode or (args.target == "--test-mode")
-    target = "" if is_test else args.target
+    is_test = args.test_mode or (args.target == "--test-mode") or (args.target_flag == "--test-mode")
+    raw_target = args.target_flag if args.target_flag is not None else args.target
+    target = "" if is_test else raw_target
 
     report = run_critic_audit(args.mode, target, test_mode=is_test)
     print(json.dumps(report, indent=2))

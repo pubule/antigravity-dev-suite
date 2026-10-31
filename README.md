@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.7.1)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.8.9)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -68,7 +68,7 @@ flowchart TD
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.7.1)
+├── plugin.json                 # Standard AGY plugin manifest (v1.8.9)
 ├── hooks.json                  # Root PostToolUse hook configuration (Universal dispatch)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)
@@ -86,14 +86,17 @@ antigravity-dev-suite/
 │   ├── refactor/SKILL.md       # /refactor: Safe tech debt remediation with invariants
 │   └── visual-qa/SKILL.md      # /visual-qa: Dual-viewport Playwright visual QA skill
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
-│   ├── validator_core.py       # Core AST, regex, JSONC, Rust/C++ raw strings, HTML and delimiter parser
+│   ├── validator_core.py       # Core AST, regex, JSONC, polyglot raw strings, and delimiter parser
 │   ├── auto_debug_runner.py    # Universal PostToolUse hook processor & syntax validator
+│   ├── auto_debug_runner.sh    # Resilient Unix wrapper for auto-debug hook execution
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
 │   ├── visual_qa.py            # Playwright dual-viewport screenshot engine (Platform-adaptive)
+│   ├── run_audit_loop.sh       # Multi-pass autonomous audit loop runner (Unix)
+│   ├── run_audit_loop.ps1      # Multi-pass autonomous audit loop runner (PowerShell)
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
 ├── tests/                      # Automated Verification & TDD Suite
-│   └── test_plugin_suite.py    # Full unit and integration test suite (21 automated checks)
+│   └── test_plugin_suite.py    # Full unit and integration test suite (101 automated checks)
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux
@@ -111,12 +114,77 @@ antigravity-dev-suite/
 cd antigravity-dev-suite
 chmod +x install.sh
 ./install.sh
+
+# Optional: Install Playwright Chromium browser binaries (~150MB)
+./install.sh --with-browsers
+# or set AGY_INSTALL_BROWSERS=1 ./install.sh
 ```
 
 ### 🪟 Windows (PowerShell 5.1 / 7+)
 ```powershell
 cd antigravity-dev-suite
 .\install.ps1
+
+# Optional: Install Playwright Chromium browser binaries
+.\install.ps1 -WithBrowsers
+```
+
+---
+
+## ⚡ CLI Utilities & Diagnostic Tools
+
+Every component includes standalone CLI execution for terminal inspection:
+
+### 1. Auto-Debug Runner (`auto_debug_runner.py`)
+```bash
+# Auto-detect ecosystem and test/lint commands (10+ ecosystems)
+python3 scripts/auto_debug_runner.py --detect
+
+# Run detected test suite autonomously
+python3 scripts/auto_debug_runner.py --run-tests
+
+# Validate single file syntax and bracket balance
+python3 scripts/auto_debug_runner.py --check <path/to/file>
+
+# Read cached syntax error from recent hook execution
+python3 scripts/auto_debug_runner.py --last-error
+
+# Clear cached syntax error
+python3 scripts/auto_debug_runner.py --clear-last-error
+```
+
+### 2. Critic Loop Orchestrator (`critic_loop.py`)
+```bash
+# Run full static audit across target directory
+python3 scripts/critic_loop.py --mode all --target .
+
+# Run syntax and bracket validation only
+python3 scripts/critic_loop.py --mode syntax --target src/
+
+# Run OWASP Top 10 secrets and empty exception scans only
+python3 scripts/critic_loop.py --mode security --target .
+
+# Inspect synthetic self-test mode
+python3 scripts/critic_loop.py --mode all --test-mode
+```
+
+### 3. Visual QA Runner (`visual_qa.py`)
+```bash
+# Capture dual-viewport screenshots against detected or default dev server
+python3 scripts/visual_qa.py
+
+# Target specific dev server URL or port
+python3 scripts/visual_qa.py --dev-server http://localhost:5173
+python3 scripts/visual_qa.py --port 3000
+```
+
+### 4. Autonomous Multi-Pass Audit Loops
+```bash
+# Unix (macOS / Linux)
+./scripts/run_audit_loop.sh -n 3 -m all -w .
+
+# Windows (PowerShell)
+.\scripts\run_audit_loop.ps1 -MaxCycles 3 -Mode all -WorkspacePath .
 ```
 
 ---

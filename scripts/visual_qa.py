@@ -14,23 +14,52 @@ import tempfile
 import re
 from pathlib import Path
 
-COMMON_DEV_PORTS = [5173, 3000, 8080, 4200, 8000, 3001, 5000, 8081, 19006]
+COMMON_DEV_PORTS = [
+    5173, 5174, 5175, 5176, 5177, 5178, 5179,
+    3000, 3001, 3002, 3003, 3004, 3005,
+    4173,  # Vite preview
+    8080, 8081, 8000, 8001, 8002, 8888,
+    4200, 5000, 4321, 8088, 19006
+]
 
-def is_http_server_active(port: int, host: str = "127.0.0.1") -> bool:
+def is_http_server_active(port: int, host: str = "localhost") -> bool:
     """Fast non-blocking socket probe to verify if the port is actively listening across IPv4 and IPv6."""
-    hosts_to_try = [host]
-    if host == "127.0.0.1":
-        hosts_to_try.append("::1")
-    for h in hosts_to_try:
+    # 1. Try standard dual-stack host resolution first
+    try:
+        with socket.create_connection((host, port), timeout=0.04):
+            return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        # Host probe unreached; fall back to candidate IP addresses
+        _fallback_needed = True
+
+    # 2. Explicit dual-stack fallback for environments where localhost resolution is IPv4 or IPv6 only
+    for candidate_ip in ("127.0.0.1", "::1"):
         try:
-            with socket.create_connection((h, port), timeout=0.08):
+            with socket.create_connection((candidate_ip, port), timeout=0.04):
                 return True
         except (socket.timeout, ConnectionRefusedError, OSError):
             continue
+
     return False
 
-def find_active_dev_server() -> str:
+def find_active_dev_server(preferred_port: int | None = None) -> str:
     """Finds first active local development HTTP server rapidly."""
+    if preferred_port and 1 <= preferred_port <= 65535:
+        if is_http_server_active(preferred_port):
+            return f"http://localhost:{preferred_port}"
+
+    env_ports = []
+    for env_key in ("PORT", "VITE_PORT", "DEV_PORT", "SERVER_PORT"):
+        val = os.environ.get(env_key, "").strip()
+        if val.isdigit():
+            p = int(val)
+            if 1 <= p <= 65535 and p not in env_ports:
+                env_ports.append(p)
+
+    for port in env_ports:
+        if is_http_server_active(port):
+            return f"http://localhost:{port}"
+
     for port in COMMON_DEV_PORTS:
         if is_http_server_active(port):
             return f"http://localhost:{port}"
@@ -44,11 +73,11 @@ def extract_route_from_source(file_path: Path) -> str:
         m = re.search(r"@route\s+([/\w\-\?&=]+)", head)
         if m:
             return m.group(1).strip()
-    except Exception:
-        pass
+    except (OSError, UnicodeDecodeError):
+        m = None
     return ""
 
-def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = False, route: str = "") -> int:
+def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = False, route: str = "", dev_server: str = "", port: int | None = None) -> int:
     result = {
         "target": target,
         "status": "SUCCESS",
@@ -95,16 +124,26 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
         # URL / File Resolution
         if target.startswith("http://") or target.startswith("https://"):
             url = target
+        elif target.startswith("localhost:") or target.startswith("127.0.0.1:"):
+            url = f"http://{target}"
         else:
-            file_path = Path(target).resolve()
-            # If it's a frontend source file (tsx/jsx/vue/svelte) that cannot run directly via file://
-            if file_path.suffix.lower() in [".tsx", ".jsx", ".vue", ".svelte", ".ts"]:
-                active_server = find_active_dev_server()
+            # Handle possible URL query or hash fragment on file targets
+            clean_target = target
+            suffix_fragment = ""
+            if "#" in target or "?" in target:
+                split_idx = min([i for i in [target.find("#"), target.find("?")] if i != -1])
+                clean_target = target[:split_idx]
+                suffix_fragment = target[split_idx:]
+
+            file_path = Path(clean_target).expanduser().resolve()
+            # If it's a frontend source file (tsx/jsx/vue/svelte/astro) that cannot run directly via file://
+            if file_path.suffix.lower() in [".tsx", ".jsx", ".vue", ".svelte", ".astro", ".ts"]:
+                active_server = dev_server.rstrip("/") if dev_server else find_active_dev_server(preferred_port=port)
                 if active_server:
                     target_route = route or extract_route_from_source(file_path) or "/"
                     if not target_route.startswith("/"):
                         target_route = "/" + target_route
-                    url = f"{active_server}{target_route}"
+                    url = f"{active_server}{target_route}{suffix_fragment}"
                     result["dev_server_detected"] = active_server
                 else:
                     result["status"] = "SKIPPED_NO_DEV_SERVER"
@@ -119,7 +158,26 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                     result["warnings"].append(f"Target file does not exist: {target}")
                     print(json.dumps(result, indent=2))
                     return 1
-                url = file_path.as_uri()
+                
+                # If target is a directory, resolve index.html or dev server
+                if file_path.is_dir():
+                    index_html = file_path / "index.html"
+                    if index_html.is_file():
+                        url = index_html.as_uri() + suffix_fragment
+                    else:
+                        active_server = dev_server.rstrip("/") if dev_server else find_active_dev_server(preferred_port=port)
+                        if active_server:
+                            url = active_server + suffix_fragment
+                            result["dev_server_detected"] = active_server
+                        else:
+                            result["status"] = "SKIPPED_NO_DEV_SERVER"
+                            result["warnings"].append(
+                                f"Directory '{file_path.name}' has no index.html and no active dev server was detected."
+                            )
+                            print(json.dumps(result, indent=2))
+                            return 0
+                else:
+                    url = file_path.as_uri() + suffix_fragment
 
         try:
             from playwright.sync_api import sync_playwright
@@ -156,6 +214,10 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                     # Create a single managed page with error listeners
                     page = browser.new_page(viewport={"width": 1280, "height": 800})
                     page.on("pageerror", lambda err: result["page_errors"].append(str(err)))
+                    page.on("response", lambda resp: (
+                        result["warnings"].append(f"HTTP {resp.status} on {resp.url}")
+                        if resp.status >= 400 else None
+                    ))
                     
                     # Separate fatal errors from non-fatal warnings
                     def handle_console(msg):
@@ -166,9 +228,17 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
 
                     page.on("console", handle_console)
 
-                    # Navigate to target
-                    page.goto(url, wait_until="load", timeout=12000)
-                    page.wait_for_timeout(400)
+                    # Resilient navigation: load DOM first, then bounded wait for network idle/load
+                    try:
+                        page.goto(url, wait_until="domcontentloaded", timeout=12000)
+                        try:
+                            page.wait_for_load_state("load", timeout=3000)
+                        except Exception as load_err:
+                            result["warnings"].append(f"Load timeout for {url}: {str(load_err)}")
+                    except Exception as nav_err:
+                        result["warnings"].append(f"Navigation notice for {url}: {str(nav_err)}")
+
+                    page.wait_for_timeout(300)
 
                     # 1. Desktop Viewport (1280x800)
                     desktop_screenshot = out_path / "desktop_preview.png"
@@ -179,6 +249,43 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                     page.set_viewport_size({"width": 375, "height": 667})
                     page.wait_for_timeout(200)
 
+                    # Programmatic Mobile Horizontal Scroll Overflow & Tap Target Check
+                    try:
+                        metrics = page.evaluate("""() => {
+                            const scrollW = Math.max(
+                                document.body ? document.body.scrollWidth : 0,
+                                document.documentElement ? document.documentElement.scrollWidth : 0
+                            );
+                            const innerW = window.innerWidth;
+                            const smallTargets = [];
+                            const interactives = document.querySelectorAll('button, a[href], input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [role="checkbox"], [tabindex="0"]');
+                            for (const el of interactives) {
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44)) {
+                                    const desc = (el.innerText || el.getAttribute('aria-label') || el.tagName.toLowerCase()).trim();
+                                    smallTargets.push(`${el.tagName.toLowerCase()} ("${desc.slice(0, 25)}") size ${Math.round(rect.width)}x${Math.round(rect.height)}px`);
+                                    if (smallTargets.length >= 3) break;
+                                }
+                            }
+                            return {
+                                hasOverflow: scrollW > innerW,
+                                scrollWidth: scrollW,
+                                innerWidth: innerW,
+                                smallTargets: smallTargets
+                            };
+                        }""")
+                        if metrics.get("hasOverflow"):
+                            result["page_errors"].append(
+                                f"HorizontalOverflowDetected: scrollWidth ({metrics['scrollWidth']}px) exceeds mobile viewport ({metrics['innerWidth']}px)."
+                            )
+                        if metrics.get("smallTargets"):
+                            for target_info in metrics["smallTargets"]:
+                                result["warnings"].append(
+                                    f"TouchTargetUnder44px: interactive element {target_info} is below 44x44px minimum touch target size."
+                                )
+                    except Exception as eval_err:
+                        result["warnings"].append(f"Mobile metrics evaluation notice: {str(eval_err)}")
+
                     mobile_screenshot = out_path / "mobile_preview.png"
                     page.screenshot(path=str(mobile_screenshot), full_page=True)
                     result["screenshots"]["mobile"] = str(mobile_screenshot)
@@ -187,8 +294,8 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                     if browser is not None:
                         try:
                             browser.close()
-                        except Exception:
-                            pass
+                        except Exception as close_err:
+                            result["warnings"].append(f"Browser close notice: {str(close_err)}")
                 
         except Exception as e:
             result["status"] = "ERROR"
@@ -204,21 +311,30 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
         if temp_synthetic_file and temp_synthetic_file.exists():
             try:
                 temp_synthetic_file.unlink()
-            except Exception:
-                pass
+            except (OSError, PermissionError):
+                temp_synthetic_file = None
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Visual QA Screenshot Runner")
     parser.add_argument("target", nargs="?", default="--test-mode", help="HTML file path, component path, or HTTP URL to inspect")
     parser.add_argument("--output-dir", default=str(Path(tempfile.gettempdir()) / "agy_visual_qa"), help="Directory where screenshots will be saved")
     parser.add_argument("--route", default="", help="Optional sub-route when inspecting component file (e.g. /dashboard)")
+    parser.add_argument("--dev-server", default="", help="Explicit dev server base URL (e.g. http://localhost:3000)")
+    parser.add_argument("--port", type=int, default=None, help="Explicit port to probe for dev server (e.g. 3000)")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
     
     args = parser.parse_args()
     is_test = args.test_mode or (args.target == "--test-mode")
     target = "" if is_test else args.target
     
-    sys.exit(capture_visual_artifacts(target, args.output_dir, test_mode=is_test, route=args.route))
+    sys.exit(capture_visual_artifacts(
+        target,
+        args.output_dir,
+        test_mode=is_test,
+        route=args.route,
+        dev_server=args.dev_server,
+        port=args.port
+    ))
 
 if __name__ == "__main__":
     main()

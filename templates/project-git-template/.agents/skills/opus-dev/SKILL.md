@@ -5,19 +5,22 @@ description: Unified end-to-end autonomous engineering meta-engine. Coordinates 
 
 # 🚀 Claude Opus 5.5 Unified Engineering Meta-Engine (`/opus-dev`)
 
-Use this skill when developing a feature, bug fix, refactor, or complete module under the full **Claude Opus 5.5 Standard**. It autonomously coordinates all suite capabilities in a deterministic 5-phase loop with strict **KISS & YAGNI enforcement**.
+Use this skill when developing a feature, bug fix, refactor, or complete module under the full **Claude Opus 5.5 Standard**. It autonomously executes a self-healing engineering loop with strict **KISS & YAGNI enforcement**, running adversarial reviews and surgical fixes in a closed loop until achieving a clean `PASS` verdict.
 
 ---
 
-## 📋 Complete 5-Phase Autonomous Pipeline
+## 📋 Autonomous Closed-Loop Engineering Pipeline
 
 ```mermaid
 flowchart TD
     P1["1. Design & KISS/YAGNI Gate (/brainstorm)"] --> P2["2. Milestone & Atomic Planning (/plan)"]
     P2 --> P3["3. Strict TDD (RED: Failing Tests → GREEN: Minimal Code)"]
     P3 --> P4["4. Closed-Loop Auto-Debug (/auto-debug)"]
-    P4 --> P5["5. Adversarial Review & Visual QA (/code-review, /visual-qa)"]
-    P5 --> Done["✅ Verified Production Delivery"]
+    P4 --> P5["5. Adversarial Audit & Visual QA (claude-critic / visual-qa)"]
+    P5 --> CheckPass{"Audit Status"}
+    CheckPass -- "RETRY (Defects Found)" --> SurgicalFix["Apply Minimal Surgical Fixes"]
+    SurgicalFix --> P3
+    CheckPass -- "PASS (0 Defects)" --> Done["✅ Verified Production Delivery"]
 ```
 
 ---
@@ -48,7 +51,13 @@ flowchart TD
   - Apply minimal targeted surgical fix.
   - Re-verify in a closed loop (up to 3 autonomous cycles) until 100% green.
 
-### Phase 5: Adversarial Review & Visual QA (`/code-review`, `/visual-qa`)
-- **Backend / Logic**: Run 4-pass audit via `claude-critic` (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Strict Typing & ASD-STE100).
+### Phase 5: Adversarial Audit & Self-Healing Loop (`claude-critic`, `visual-qa`)
+- **Pre-Flight Static Audit**: Execute `python3 scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, and exposed secrets before invoking review.
+- **Adversarial Audit**: Invoke `claude-critic` across the 7 Opus pillars (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Type Safety, Boundary Conditions).
 - **Frontend / UI**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and review via `visual-qa-critic`.
-- **Delivery**: Present conclusive terminal verification evidence in clear ASD-STE100 format.
+- **Closed-Loop Resolution**:
+  - If the critic returns `RETRY`, parse all reported violations and suggested fixes.
+  - Apply minimal surgical fixes to codebase and test suite.
+  - Re-run test suite and re-audit via `claude-critic`.
+  - **Repeat the loop until the critic returns status `PASS` with 0 violations.**
+- **Delivery**: Present conclusive terminal verification evidence and final clean critic verdict in ASD-STE100 format.

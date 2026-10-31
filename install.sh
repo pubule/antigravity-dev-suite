@@ -43,16 +43,17 @@ if "${PYTHON_BIN}" -c "import playwright" >/dev/null 2>&1; then
 else
   echo "  ⏳ Installing Playwright python module..."
   "${PYTHON_BIN}" -m pip install --quiet playwright 2>/dev/null \
-    || "${PYTHON_BIN}" -m pip install --break-system-packages --quiet playwright 2>/dev/null \
     || "${PYTHON_BIN}" -m pip install --user --quiet playwright 2>/dev/null \
-    || true
+    || "${PYTHON_BIN}" -m pip install --break-system-packages --quiet playwright 2>/dev/null \
+    || echo "  ℹ Notice: Playwright python module could not be installed automatically. Visual QA will run in fallback mode."
 fi
 
 # Attempt Chromium browser install
-if command -v playwright >/dev/null 2>&1; then
+if [ "${AGY_INSTALL_BROWSERS:-0}" = "1" ] || [ "${1:-}" = "--with-browsers" ]; then
+  echo "  ⏳ Installing Playwright Chromium browser binaries..."
   playwright install chromium 2>/dev/null || "${PYTHON_BIN}" -m playwright install chromium 2>/dev/null || true
-elif "${PYTHON_BIN}" -m playwright --version >/dev/null 2>&1; then
-  "${PYTHON_BIN}" -m playwright install chromium 2>/dev/null || true
+else
+  echo "  ℹ Chromium installation skipped. Pass --with-browsers or run 'playwright install chromium' when needed for visual QA."
 fi
 
 # 4. Link or install plugin bundle
@@ -61,7 +62,7 @@ rm -rf "${TARGET_PLUGIN_DIR}" 2>/dev/null || true
 ln -sf "${SCRIPT_DIR}" "${TARGET_PLUGIN_DIR}" 2>/dev/null || true
 
 # Ensure executable permissions on scripts
-chmod +x "${SCRIPT_DIR}/scripts/"*.sh "${SCRIPT_DIR}/scripts/"*.py 2>/dev/null || true
+chmod +x "${SCRIPT_DIR}/"*.sh "${SCRIPT_DIR}/scripts/"*.sh "${SCRIPT_DIR}/scripts/"*.py 2>/dev/null || true
 
 # Enable plugin in config.json
 "${PYTHON_BIN}" -c "
@@ -72,8 +73,10 @@ try:
         data = json.load(f)
 except Exception:
     data = {}
-plugins = data.setdefault('plugins', {})
-if 'antigravity-dev-suite' not in plugins or not isinstance(plugins['antigravity-dev-suite'], dict):
+if not isinstance(data.get('plugins'), dict):
+    data['plugins'] = {}
+plugins = data['plugins']
+if not isinstance(plugins.get('antigravity-dev-suite'), dict):
     plugins['antigravity-dev-suite'] = {'enabled': True}
 else:
     plugins['antigravity-dev-suite']['enabled'] = True
