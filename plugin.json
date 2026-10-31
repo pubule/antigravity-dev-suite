@@ -1,7 +1,7 @@
 {
   "name": "antigravity-dev-suite",
-  "version": "1.1.0",
-  "description": "Enterprise Development Suite for Antigravity: Hybrid Auto-Debug, Playwright Multimodal Visual QA (Desktop + Mobile 375px), Claude-Discipline and Autonomous Critic Loops.",
+  "version": "1.2.0",
+  "description": "Enterprise Cross-Platform Development Suite for Antigravity (macOS, Linux, Windows): Hybrid Auto-Debug, Playwright Multimodal Visual QA (Desktop + Mobile 375px), Claude-Discipline and Autonomous Critic Loops.",
   "displayName": "Antigravity Dev Suite",
   "suggestedPrompts": [
     "Run Playwright dual-viewport visual QA on the frontend",

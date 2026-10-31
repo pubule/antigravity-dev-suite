@@ -93,7 +93,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                 result["warnings"].append(f"Target file does not exist: {target}")
                 print(json.dumps(result, indent=2))
                 return 1
-            url = f"file://{file_path}"
+            url = file_path.as_uri()
 
     try:
         from playwright.sync_api import sync_playwright
@@ -109,33 +109,43 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--ignore-certificate-errors"]
+                args=[
+                    "--single-process",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
+                    "--ignore-certificate-errors",
+                ],
             )
-            
+
+            # Create a single managed page with error listeners
+            page = browser.new_page(viewport={"width": 1280, "height": 800})
+            page.on("pageerror", lambda err: result["page_errors"].append(str(err)))
+            page.on(
+                "console",
+                lambda msg: result["console_errors"].append(f"[{msg.type}] {msg.text}")
+                if msg.type in ["error", "warning"]
+                else None,
+            )
+
+            # Navigate once
+            page.goto(url, wait_until="load", timeout=12000)
+            page.wait_for_timeout(400)
+
             # 1. Desktop Viewport (1280x800)
-            desktop_page = browser.new_page(viewport={"width": 1280, "height": 800})
-            desktop_page.on("pageerror", lambda err: result["page_errors"].append(str(err)))
-            desktop_page.on("console", lambda msg: result["console_errors"].append(f"[{msg.type}] {msg.text}") if msg.type in ["error", "warning"] else None)
-            
-            desktop_page.goto(url, wait_until="load", timeout=12000)
-            desktop_page.wait_for_timeout(400)
-            
             desktop_screenshot = out_path / "desktop_preview.png"
-            desktop_page.screenshot(path=str(desktop_screenshot), full_page=True)
+            page.screenshot(path=str(desktop_screenshot), full_page=True)
             result["screenshots"]["desktop"] = str(desktop_screenshot)
-            desktop_page.close()
-            
+
             # 2. Mobile Viewport (375x667 - iPhone SE / Standard Mobile)
-            mobile_page = browser.new_page(viewport={"width": 375, "height": 667}, is_mobile=True)
-            mobile_page.on("pageerror", lambda err: result["page_errors"].append(str(err)))
-            mobile_page.goto(url, wait_until="load", timeout=12000)
-            mobile_page.wait_for_timeout(400)
-            
+            page.set_viewport_size({"width": 375, "height": 667})
+            page.wait_for_timeout(200)
+
             mobile_screenshot = out_path / "mobile_preview.png"
-            mobile_page.screenshot(path=str(mobile_screenshot), full_page=True)
+            page.screenshot(path=str(mobile_screenshot), full_page=True)
             result["screenshots"]["mobile"] = str(mobile_screenshot)
-            mobile_page.close()
-            
+
             browser.close()
             
     except Exception as e:
@@ -150,7 +160,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Visual QA Screenshot Runner")
     parser.add_argument("target", nargs="?", default="--test-mode", help="HTML file path, component path, or HTTP URL to inspect")
-    parser.add_argument("--output-dir", default=os.environ.get("TMPDIR", "/tmp") + "/agy_visual_qa", help="Directory where screenshots will be saved")
+    parser.add_argument("--output-dir", default=str(Path(tempfile.gettempdir()) / "agy_visual_qa"), help="Directory where screenshots will be saved")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
     
     args = parser.parse_args()

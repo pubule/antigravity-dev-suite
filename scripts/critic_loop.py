@@ -45,10 +45,12 @@ def run_critic_audit(mode: str, target: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Critic Loop Runner")
     parser.add_argument("--mode", choices=["logic", "visual", "all"], default="all", help="Critic evaluation mode")
-    parser.add_argument("target", nargs="?", default="--test-mode", help="File or URL target")
+    parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
+    parser.add_argument("target", nargs="?", default="", help="File or URL target")
     
     args = parser.parse_args()
-    report = run_critic_audit(args.mode, args.target)
+    target = "--test-mode" if (args.test_mode or not args.target) else args.target
+    report = run_critic_audit(args.mode, target)
     print(json.dumps(report, indent=2))
 
 if __name__ == "__main__":
