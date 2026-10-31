@@ -1,0 +1,19 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary Visual QA Artifacts
+.visual_qa_artifacts/
+/tmp/agy_visual_qa/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

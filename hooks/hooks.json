@@ -1,0 +1,27 @@
+{
+  "antigravity-dev-suite-hooks": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.sh",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
