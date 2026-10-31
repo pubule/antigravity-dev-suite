@@ -17,5 +17,6 @@ This repository follows the **Antigravity Dev Suite** engineering standards:
 - `/plan`: Milestone decomposition with explicit Red-Green TDD targets.
 - `/auto-debug`: Multi-ecosystem closed-loop auto-debugger.
 - `/code-review`: 4-Pass adversarial security, concurrency & typing audit.
+- `/security-audit`: Cloudflare-inspired vulnerability harness (Hunter vs. Verifier, attack surfaces, findings.json).
 - `/refactor`: Safe tech debt reduction preserving invariants and 100% green tests.
 - `/visual-qa`: Dual-viewport Playwright visual inspector.

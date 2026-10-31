@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.9.0] — 2026-10-31
+
+### 🚀 Highlights & Features Added
+- **Cloudflare Security Audit Harness Integration**: Integrated specialized `/security-audit` skill modeling Cloudflare's vulnerability research harness.
+- **4-Phase Vulnerability Audit Engine**:
+  - *Phase 1 (Recon & Trust Boundaries)*: Maps attack surfaces, entry points, identity contexts, and trust domain boundaries.
+  - *Phase 2 (Coverage-Led Hypotheses)*: Generates systematic vulnerability hypotheses cross-referencing threat vectors.
+  - *Phase 3 (Hunter vs. Verifier Falsification Loop)*: Performs adversarial hypothesis falsification to eliminate false positives before reporting.
+  - *Phase 4 (Structured Vulnerability Artifacts)*: Generates machine-readable `findings.json` and actionable `SECURITY-REPORT.md` with complete remediation patches.
+- **Modular Attack Vector Reference Catalogs**:
+  - `references/web-and-auth.md`: BOLA/IDOR, BFLA, JWT misuse, SSRF, DNS rebinding, request smuggling, and cache deception.
+  - `references/ai-and-llm.md`: Direct and indirect prompt injection, tool isolation, agent secret extraction, and context poisoning.
+  - `references/memory-and-injection.md`: Command injection, SQL/NoSQL injection, path traversal, deserialization, and native memory safety.
+- **Template Parity & Manifest Registration**: Mirrored all skill files to `templates/project-git-template/.agents/skills/security-audit/` and registered `/security-audit` in `plugin.json` and template `GEMINI.md`.
+- **Test Suite Verification**: Added automated tests for `security-audit` frontmatter, schema compliance, and reference integrity. 102 test cases passing with 100% green status.
+
+---
+
 ## [1.8.9] — 2026-10-31
 
 ### 🚀 Highlights & Critical Fixes Remediated

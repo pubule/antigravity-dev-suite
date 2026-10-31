@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.8.9)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.9.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -27,6 +27,7 @@ Every skill in the suite is exposed as a first-class native slash command in Ant
 | **`/code-review`**|`skills/code-review`| **Adversarial Audit** | **4-Pass Inspection**: Invariants & KISS/YAGNI, Concurrency & Leaks, OWASP Top 10 Security, Strict Typing. |
 | **`/refactor`** | `skills/refactor` | **Tech Debt Remediation** | Safe refactoring & KISS simplification with baseline verification, preserving 100% green tests and public APIs. |
 | **`/visual-qa`** | `skills/visual-qa` | **Multimodal UI Inspector** | Dual-viewport Playwright screenshots (**Desktop 1280x800 + Mobile 375x667 iPhone SE**). |
+| **`/security-audit`** | `skills/security-audit` | **Vulnerability Harness** | Cloudflare 4-phase audit (Recon, Coverage Sweeps, Hunter/Verifier, `findings.json` & `SECURITY-REPORT.md`). |
 
 ---
 
@@ -68,7 +69,7 @@ flowchart TD
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.8.9)
+├── plugin.json                 # Standard AGY plugin manifest (v1.9.0)
 ├── hooks.json                  # Root PostToolUse hook configuration (Universal dispatch)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)
@@ -84,7 +85,13 @@ antigravity-dev-suite/
 │   ├── auto-debug/SKILL.md     # /auto-debug: Multi-ecosystem closed-loop auto-debugger
 │   ├── code-review/SKILL.md    # /code-review: 4-Pass adversarial security & typing gate
 │   ├── refactor/SKILL.md       # /refactor: Safe tech debt remediation with invariants
-│   └── visual-qa/SKILL.md      # /visual-qa: Dual-viewport Playwright visual QA skill
+│   ├── visual-qa/SKILL.md      # /visual-qa: Dual-viewport Playwright visual QA skill
+│   └── security-audit/         # /security-audit: Cloudflare-inspired vulnerability harness
+│       ├── SKILL.md            # 4-phase recon, sweep, falsification, and reporting workflow
+│       └── references/         # Modular vulnerability threat profiles & audit vectors
+│           ├── web-and-auth.md # Web, API, BOLA/IDOR, and authentication vulnerabilities
+│           ├── ai-and-llm.md   # Prompt injection, tool isolation, and context poisoning
+│           └── memory-and-injection.md # SQLi, command injection, path traversal, memory bugs
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
 │   ├── validator_core.py       # Core AST, regex, JSONC, polyglot raw strings, and delimiter parser
 │   ├── auto_debug_runner.py    # Universal PostToolUse hook processor & syntax validator
@@ -96,7 +103,7 @@ antigravity-dev-suite/
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
 ├── tests/                      # Automated Verification & TDD Suite
-│   └── test_plugin_suite.py    # Full unit and integration test suite (101 automated checks)
+│   └── test_plugin_suite.py    # Full unit and integration test suite (102 automated checks)
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux

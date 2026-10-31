@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.8.9"
+        assert data.get("version") == "1.9.0"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -2465,6 +2465,31 @@ def test_critic_loop_fine_grained_modes_and_target_flag():
         if os.path.exists(temp_py):
             os.remove(temp_py)
 
+def test_security_audit_skill_and_references():
+    skill_dir = PLUGIN_ROOT / "skills" / "security-audit"
+    skill_file = skill_dir / "SKILL.md"
+    assert skill_file.exists(), f"Missing {skill_file}"
+
+    text = skill_file.read_text(encoding="utf-8")
+    assert "name: security-audit" in text
+    assert "description:" in text
+    assert "findings.json" in text
+    assert "SECURITY-REPORT.md" in text
+
+    ref_dir = skill_dir / "references"
+    assert ref_dir.is_dir()
+    expected_refs = ["web-and-auth.md", "ai-and-llm.md", "memory-and-injection.md"]
+    for ref_name in expected_refs:
+        ref_file = ref_dir / ref_name
+        assert ref_file.exists(), f"Missing reference file: {ref_name}"
+        assert ref_file.stat().st_size > 500, f"Reference file {ref_name} is too small"
+
+    # Verify template parity
+    tpl_dir = PLUGIN_ROOT / "templates" / "project-git-template" / ".agents" / "skills" / "security-audit"
+    assert (tpl_dir / "SKILL.md").exists()
+    for ref_name in expected_refs:
+        assert (tpl_dir / "references" / ref_name).exists()
+
 import unittest
 
 class AntigravityDevSuiteTestCase(unittest.TestCase):
@@ -2685,4 +2710,6 @@ if __name__ == "__main__":
     print("✔ Critic loop integrates last syntax error passed")
     test_critic_loop_fine_grained_modes_and_target_flag()
     print("✔ Critic loop fine-grained modes and target flag passed")
+    test_security_audit_skill_and_references()
+    print("✔ Security audit skill and modular references passed")
     print("\n🎉 ALL TESTS PASSED (100% GREEN)")
