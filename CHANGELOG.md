@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.7.1] — 2026-10-31
+
+### 🛠️ Bug Fixes & Improvements
+- **JS/TS Nested Template Literal Tracking**: Fixed state machine in `validator_core.py` to correctly handle nested template literals, bracket delimiters in expressions, and string quotes inside `${ ... }`.
+- **HTML Document Tag Closure Validation**: Integrated `DefensiveHTMLValidator` to check matching opening and closing HTML tags while respecting HTML5 void elements.
+- **Windows Python Interpreter Priority**: Updated `hooks.json` to prioritize `py -3` before `python3` to avoid Microsoft Store redirection dialogs on Windows.
+- **Subagent Definition Verification**: Added automated tests verifying YAML frontmatter integrity across all subagent markdown files.
+
+---
+
 ## [1.7.0] — 2026-10-31
 
 ### 🚀 Highlights

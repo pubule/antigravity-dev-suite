@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.7.0"
+        assert data.get("version") == "1.7.1"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -332,6 +332,14 @@ def test_tool_call_argument_extraction():
         payload2 = json.dumps({"toolCall": {"name": "edit_file", "args": {"target_file": bad_file}}})
         _, _, stderr2 = run_script("auto_debug_runner.py", [], input_data=payload2)
         assert "SyntaxError" in stderr2
+
+        # Test defensive extraction against null / malformed inputs
+        from validator_core import extract_target_file
+        assert extract_target_file({"toolCall": None}) == ""
+        assert extract_target_file({"toolCall": {"args": None}}) == ""
+        assert extract_target_file({"args": "string instead of dict"}) == ""
+        assert extract_target_file(None) == ""
+        assert extract_target_file(12345) == ""
     finally:
         if os.path.exists(bad_file):
             os.remove(bad_file)
@@ -379,10 +387,82 @@ def test_socket_server_dual_stack_probe():
     active = is_http_server_active(65534)
     assert active is False
 
+def test_js_ts_template_literal_nesting():
+    # 1. Nested template literal with brackets inside strings should not cause false positives
+    with tempfile.NamedTemporaryFile(suffix=".ts", mode="w", delete=False) as f:
+        f.write(r"const s1 = `outer ${ `}` } end`;" + "\n" + r"const s2 = `outer ${ `{` } end`;" + "\nfunction test() { return 1; }\n")
+        ts_file = f.name
+
+    try:
+        payload = json.dumps({"toolCall": {"name": "write_file", "args": {"Path": ts_file}}})
+        code, stdout, stderr = run_script("auto_debug_runner.py", [], input_data=payload)
+        assert code == 0
+        assert stdout.strip() == "{}"
+        assert stderr.strip() == "", f"Nested template literals caused false positive: {stderr}"
+    finally:
+        if os.path.exists(ts_file):
+            os.remove(ts_file)
+
+    # 2. Syntax errors inside template literal expressions must be caught
+    with tempfile.NamedTemporaryFile(suffix=".ts", mode="w", delete=False) as f:
+        f.write('const broken = `val: ${ [1, 2 } end`;\n')
+        bad_ts = f.name
+
+    try:
+        payload = json.dumps({"toolCall": {"name": "write_file", "args": {"Path": bad_ts}}})
+        code, stdout, stderr = run_script("auto_debug_runner.py", [], input_data=payload)
+        assert code == 0
+        assert "BracketMismatch" in stderr or "unmatched" in stderr or "UnclosedBracket" in stderr
+    finally:
+        if os.path.exists(bad_ts):
+            os.remove(bad_ts)
+
+def test_html_tag_validation():
+    # 1. Valid HTML
+    with tempfile.NamedTemporaryFile(suffix=".html", mode="w", delete=False) as f:
+        f.write('<!DOCTYPE html><html><head><title>Test</title></head><body><div><p>Hello</p></div></body></html>')
+        good_html = f.name
+
+    try:
+        payload = json.dumps({"toolCall": {"name": "write_file", "args": {"Path": good_html}}})
+        code, stdout, stderr = run_script("auto_debug_runner.py", [], input_data=payload)
+        assert code == 0
+        assert stdout.strip() == "{}"
+        assert stderr.strip() == ""
+    finally:
+        if os.path.exists(good_html):
+            os.remove(good_html)
+
+    # 2. Broken HTML (unmatched tag)
+    with tempfile.NamedTemporaryFile(suffix=".html", mode="w", delete=False) as f:
+        f.write('<div><span>Hello</div></span>')
+        bad_html = f.name
+
+    try:
+        payload = json.dumps({"toolCall": {"name": "write_file", "args": {"Path": bad_html}}})
+        code, stdout, stderr = run_script("auto_debug_runner.py", [], input_data=payload)
+        assert code == 0
+        assert "HTMLTagMismatch" in stderr or "TagMismatch" in stderr or "HTMLError" in stderr
+    finally:
+        if os.path.exists(bad_html):
+            os.remove(bad_html)
+
+def test_subagent_definitions():
+    agents_dir = PLUGIN_ROOT / "agents"
+    agent_files = list(agents_dir.glob("*.md"))
+    assert len(agent_files) >= 3, "Missing subagent persona markdown files"
+    for agent_file in agent_files:
+        content = agent_file.read_text(encoding="utf-8")
+        assert content.startswith("---"), f"Missing YAML frontmatter in {agent_file.name}"
+        assert "name:" in content, f"Missing name in {agent_file.name}"
+        assert "description:" in content, f"Missing description in {agent_file.name}"
+
 if __name__ == "__main__":
     print("Running Complete Antigravity Dev Suite Test Suite...")
     test_manifests()
     print("✔ Manifests valid")
+    test_subagent_definitions()
+    print("✔ Subagent definitions valid")
     test_critic_loop_test_mode()
     print("✔ Critic loop test-mode passed")
     test_visual_qa_test_mode()
@@ -421,4 +501,8 @@ if __name__ == "__main__":
     print("✔ TSX/JSX components check passed")
     test_socket_server_dual_stack_probe()
     print("✔ Socket server dual-stack probe check passed")
+    test_js_ts_template_literal_nesting()
+    print("✔ JS/TS template literal nesting passed")
+    test_html_tag_validation()
+    print("✔ HTML tag validation passed")
     print("\n🎉 ALL TESTS PASSED (100% GREEN)")

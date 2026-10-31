@@ -12,8 +12,40 @@ import ast
 import json
 import re
 from pathlib import Path
+from html.parser import HTMLParser
 
 MAX_VALIDATION_FILE_SIZE = 2 * 1024 * 1024  # 2 MB safety threshold
+
+VOID_HTML_TAGS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr", "!doctype"
+}
+
+class DefensiveHTMLValidator(HTMLParser):
+    """Defensive HTML structure and tag closure validator."""
+    def __init__(self, filename: str):
+        super().__init__()
+        self.filename = filename
+        self.tag_stack: list[tuple[str, int]] = []
+        self.errors: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs):
+        tag_lower = tag.lower()
+        if tag_lower not in VOID_HTML_TAGS:
+            self.tag_stack.append((tag_lower, self.getpos()[0]))
+
+    def handle_endtag(self, tag: str):
+        tag_lower = tag.lower()
+        if tag_lower in VOID_HTML_TAGS:
+            return
+        if not self.tag_stack:
+            self.errors.append(f"HTMLTagMismatch in {self.filename}: unexpected closing tag </{tag_lower}> at line {self.getpos()[0]}")
+            return
+        last_tag, line_num = self.tag_stack[-1]
+        if last_tag == tag_lower:
+            self.tag_stack.pop()
+        else:
+            self.errors.append(f"HTMLTagMismatch in {self.filename}: mismatched closing tag </{tag_lower}> at line {self.getpos()[0]} (expected </{last_tag}> opened at line {line_num})")
 
 IGNORED_DIRS = {
     ".git",
@@ -61,11 +93,19 @@ def extract_target_file(payload_data: dict | str) -> str:
     if not isinstance(payload_data, dict):
         return ""
 
-    args = payload_data.get("toolCall", {}).get("args", {})
-    if not args and "args" in payload_data:
+    args = {}
+    tool_call = payload_data.get("toolCall")
+    if isinstance(tool_call, dict):
+        raw_args = tool_call.get("args")
+        if isinstance(raw_args, dict):
+            args = raw_args
+    if not args and isinstance(payload_data.get("args"), dict):
         args = payload_data["args"]
     if not args and "target" in payload_data:
-        return str(payload_data["target"])
+        return str(payload_data["target"]).strip()
+
+    if not isinstance(args, dict):
+        return ""
 
     target = (
         args.get("AbsolutePath")
@@ -194,12 +234,27 @@ def validate_code_file(file_path: Path) -> list[str]:
         except Exception as e:
             errors.append(f"JSONError in {file_path.name}: {str(e)}")
 
-    # 3. Delimiter & String Balancer for TS / JS / Rust / Go / Java / C++
+    # 3. HTML Document Validation
+    elif suffix in [".html", ".htm"]:
+        validator = DefensiveHTMLValidator(file_path.name)
+        try:
+            validator.feed(content)
+            validator.close()
+            if validator.errors:
+                errors.extend(validator.errors)
+            elif validator.tag_stack:
+                last_tag, line_num = validator.tag_stack[-1]
+                errors.append(f"UnclosedTag in {file_path.name}: unclosed <{last_tag}> opened at line {line_num}")
+        except Exception as e:
+            errors.append(f"HTMLError in {file_path.name}: {str(e)}")
+
+    # 4. Delimiter & String Balancer for TS / JS / Rust / Go / Java / C++
     elif suffix in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".rs", ".go", ".java", ".cpp", ".c", ".h"]:
         stack: list[tuple[str, int]] = []
         matching = {')': '(', '}': '{', ']': '['}
-        in_string = False
-        string_char = ''
+        is_js_ts = suffix in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]
+        
+        string_mode: str | None = None  # None, '"', "'", or '`'
         in_single_comment = False
         in_multi_comment = False
         in_regex = False
@@ -228,7 +283,7 @@ def validate_code_file(file_path: Path) -> list[str]:
                 continue
 
             # Start comments if outside strings and regex
-            if not in_string and not in_regex:
+            if string_mode is None and not in_regex:
                 if char == '/' and next_char == '/':
                     in_single_comment = True
                     i += 2
@@ -239,7 +294,7 @@ def validate_code_file(file_path: Path) -> list[str]:
                     continue
 
             # JS/TS Regex Literal handling
-            if suffix in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]:
+            if is_js_ts:
                 if in_regex:
                     if char == '\\':
                         # Escaped regex character
@@ -254,7 +309,7 @@ def validate_code_file(file_path: Path) -> list[str]:
                         last_token = '/'
                     i += 1
                     continue
-                elif not in_string and char == '/':
+                elif string_mode is None and char == '/':
                     # Check if '/' is a regex start or division
                     pre_slice = content[:i].rstrip()
                     if not pre_slice:
@@ -268,8 +323,6 @@ def validate_code_file(file_path: Path) -> list[str]:
                     prev_token_match = re.search(r'([a-zA-Z_$][a-zA-Z0-9_$]*|\d+(?:\.\d+)?|=>|\+\+|--|===|!==|==|!=|<=|>=|&&|\|\||\?\?|<<|>>|[=([{},;:!?&|^~+*%/<> -])$', pre_slice)
                     prev_token = prev_token_match.group(1) if prev_token_match else None
 
-                    # Regex can only start after operators, opening delimiters, or specific expression/statement keywords
-                    # Values, identifiers, numbers, ')', and ']' are followed by division operator '/'
                     REGEX_STARTERS = {
                         '=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '&&=', '||=', '??=',
                         '(', '[', '{', ',', ';', ':', '?',
@@ -284,7 +337,7 @@ def validate_code_file(file_path: Path) -> list[str]:
                         continue
 
             # C++ Raw String Literal handling (e.g. R"(...)" or R"delim(...)delim")
-            if suffix in [".cpp", ".c", ".h"] and not in_string:
+            if suffix in [".cpp", ".c", ".h"] and string_mode is None:
                 raw_cpp_match = re.match(r'^(?:u8|u|U|L)?R"([^ ()\\\t\r\n]{0,16})\(', content[i:])
                 if raw_cpp_match:
                     delim = raw_cpp_match.group(1)
@@ -300,7 +353,7 @@ def validate_code_file(file_path: Path) -> list[str]:
                         break
 
             # Rust Raw String Literal handling (e.g. r#"..."# or r"..." or br#"..."#)
-            if suffix == ".rs" and not in_string:
+            if suffix == ".rs" and string_mode is None:
                 raw_rs_match = re.match(r'^(?:b|c|cr|br)?r(#*)"', content[i:])
                 if raw_rs_match:
                     hashes = len(raw_rs_match.group(1))
@@ -316,26 +369,36 @@ def validate_code_file(file_path: Path) -> list[str]:
                         break
 
             # Rust Lifetime vs Char Literal handling
-            if suffix == ".rs" and not in_string and char == "'":
-                # 1. Check if it's a character literal (e.g. 'a', '\n', '\x7F', '\u{1F600}')
+            if suffix == ".rs" and string_mode is None and char == "'":
                 char_match = re.match(r"""^'(\\([nrt0'"]|x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\})|[^\\'\n])'""", content[i:])
                 if char_match:
                     i += char_match.end()
                     last_token = "'"
                     continue
-                # 2. Check if it's a lifetime identifier (e.g. 'a, 'static, '_, 'de)
                 lifetime_match = re.match(r"^'([a-zA-Z_][a-zA-Z0-9_]*)", content[i:])
                 if lifetime_match:
                     i += lifetime_match.end()
                     continue
-                # 3. Otherwise skip single quote (Rust strings are only double quotes or raw strings)
                 i += 1
                 continue
 
-            # String literal handling
-            string_delims = ['"'] if suffix == ".rs" else ['"', "'", '`']
+            # Template literal interpolation start in JS/TS: ${ ... }
+            if is_js_ts and string_mode == '`' and char == '$' and next_char == '{':
+                bs_count = 0
+                k = i - 1
+                while k >= 0 and content[k] == '\\':
+                    bs_count += 1
+                    k -= 1
+                if bs_count % 2 == 0:
+                    line_num = content.count('\n', 0, i) + 1
+                    stack.append(('${', line_num))
+                    string_mode = None
+                    i += 2
+                    continue
+
+            # String literal delimiter handling
+            string_delims = ['"'] if suffix == ".rs" else (['"', "'", '`'] if (is_js_ts or suffix == ".go") else ['"', "'"])
             if char in string_delims:
-                # Calculate consecutive preceding backslashes
                 bs_count = 0
                 k = i - 1
                 while k >= 0 and content[k] == '\\':
@@ -343,18 +406,21 @@ def validate_code_file(file_path: Path) -> list[str]:
                     k -= 1
                 is_escaped = (bs_count % 2 == 1)
 
+                # In Go raw strings (`...`), backslashes do NOT escape backticks
+                if suffix == ".go" and char == '`':
+                    is_escaped = False
+
                 if not is_escaped:
-                    if not in_string:
-                        in_string = True
-                        string_char = char
-                    elif string_char == char:
-                        in_string = False
+                    if string_mode is None:
+                        string_mode = char
+                    elif string_mode == char:
+                        string_mode = None
                         last_token = char
                 i += 1
                 continue
 
             # Delimiter checks when outside string and regex
-            if not in_string and not in_regex:
+            if string_mode is None and not in_regex:
                 if not char.isspace():
                     last_token = char
 
@@ -363,15 +429,25 @@ def validate_code_file(file_path: Path) -> list[str]:
                     stack.append((char, line_num))
                 elif char in matching:
                     line_num = content.count('\n', 0, i) + 1
-                    if not stack or stack[-1][0] != matching[char]:
-                        expected = matching[char]
-                        actual = stack[-1][0] if stack else "none"
-                        errors.append(f"BracketMismatch in {file_path.name}: unmatched '{char}' at line {line_num} (expected pair for '{actual}')")
+                    expected = matching[char]
+                    if not stack:
+                        errors.append(f"BracketMismatch in {file_path.name}: unmatched '{char}' at line {line_num} (expected pair for 'none')")
+                        break
+                    top_char, top_line = stack[-1]
+                    if char == '}' and top_char == '${':
+                        # Closing of JS/TS template literal interpolation: return to template string mode
+                        stack.pop()
+                        string_mode = '`'
+                    elif top_char != expected:
+                        errors.append(f"BracketMismatch in {file_path.name}: unmatched '{char}' at line {line_num} (expected pair for '{top_char}')")
                         break
                     else:
                         stack.pop()
 
             i += 1
+
+        if not errors and string_mode is not None:
+            errors.append(f"UnclosedString in {file_path.name}: unclosed string literal ({string_mode})")
 
         if not errors and stack:
             unclosed_char, line_num = stack[-1]

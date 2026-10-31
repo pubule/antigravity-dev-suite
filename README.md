@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.7.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.7.1)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -68,7 +68,7 @@ flowchart TD
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.7.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.7.1)
 ├── hooks.json                  # Root PostToolUse hook configuration (Universal dispatch)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)
@@ -86,14 +86,14 @@ antigravity-dev-suite/
 │   ├── refactor/SKILL.md       # /refactor: Safe tech debt remediation with invariants
 │   └── visual-qa/SKILL.md      # /visual-qa: Dual-viewport Playwright visual QA skill
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
-│   ├── validator_core.py       # Core AST, regex, JSONC, Rust/C++ raw strings and delimiter parser
+│   ├── validator_core.py       # Core AST, regex, JSONC, Rust/C++ raw strings, HTML and delimiter parser
 │   ├── auto_debug_runner.py    # Universal PostToolUse hook processor & syntax validator
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
 │   ├── visual_qa.py            # Playwright dual-viewport screenshot engine (Platform-adaptive)
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
 ├── tests/                      # Automated Verification & TDD Suite
-│   └── test_plugin_suite.py    # Full unit and integration test suite (18 automated checks)
+│   └── test_plugin_suite.py    # Full unit and integration test suite (21 automated checks)
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux
