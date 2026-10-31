@@ -107,17 +107,24 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--single-process",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-gpu",
-                    "--disable-dev-shm-usage",
-                    "--ignore-certificate-errors",
-                ],
-            )
+            # Platform-adaptive Chromium launch flags
+            base_args = [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--ignore-certificate-errors",
+            ]
+            if sys.platform == "darwin":
+                # macOS sandbox requires single-process to bypass Mach port rendezvous restriction
+                base_args.append("--single-process")
+
+            try:
+                browser = p.chromium.launch(headless=True, args=base_args)
+            except Exception:
+                # Fallback launch strategy for Windows / Linux / fallback environments
+                fallback_args = ["--no-sandbox", "--disable-dev-shm-usage"]
+                browser = p.chromium.launch(headless=True, args=fallback_args)
 
             # Create a single managed page with error listeners
             page = browser.new_page(viewport={"width": 1280, "height": 800})

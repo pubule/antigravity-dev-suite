@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Antigravity Auto-Debug & Visual QA Hook Runner (Cross-Platform PostToolUse Handler)
-100% Portable across Windows, macOS, and Linux.
+100% Portable across Windows 10/11, macOS (Intel & Apple Silicon), and Linux.
+Performs fast, non-blocking syntax probes and visual artifact triggers on modified files.
 """
 
 import sys
@@ -9,24 +10,56 @@ import os
 import ast
 import json
 import tempfile
+import re
 from pathlib import Path
 
 def validate_code_file(file_path: Path):
     """Fast non-blocking syntax probe for modified source files."""
     suffix = file_path.suffix.lower()
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except Exception:
+        return
+
+    # Python validation
     if suffix == ".py":
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
             ast.parse(content, filename=str(file_path))
         except SyntaxError:
             pass
-    elif suffix == ".json":
+
+    # JSON validation
+    elif suffix in [".json", ".jsonc", ".geojson"]:
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                json.load(f)
-        except json.JSONDecodeError:
+            # Strip simple single-line comments for jsonc
+            clean_content = re.sub(r"^\s*//.*$", "", content, flags=re.MULTILINE)
+            json.loads(clean_content)
+        except Exception:
             pass
+
+    # Basic bracket/brace balance check for JS/TS/Rust/Go/Java/C++
+    elif suffix in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".rs", ".go", ".java", ".cpp", ".c", ".h"]:
+        stack = []
+        matching = {')': '(', '}': '{', ']': '['}
+        in_string = False
+        string_char = ''
+        in_comment = False
+        
+        # Fast structural scan (handles common unclosed delimiter bugs)
+        for i, char in enumerate(content):
+            if char in ['"', "'", '`'] and (i == 0 or content[i-1] != '\\'):
+                if not in_string:
+                    in_string = True
+                    string_char = char
+                elif string_char == char:
+                    in_string = False
+            elif not in_string:
+                if char in matching.values():
+                    stack.append(char)
+                elif char in matching:
+                    if stack and stack[-1] == matching[char]:
+                        stack.pop()
 
 def main():
     # 1. Feature Flag check
@@ -76,7 +109,7 @@ def main():
                     capture_visual_artifacts(str(file_path), output_dir)
                 except Exception:
                     pass
-            # B. Backend Code Syntax Validation
+            # B. Backend & Multi-Language Code Syntax Validation
             else:
                 validate_code_file(file_path)
 

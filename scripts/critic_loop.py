@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Antigravity Critic Loop Orchestrator (Cross-Platform)
-Executes verification and formats structured evaluation reports for logic & visual QA.
+Executes deep verification and formats structured evaluation reports for logic, AST, and visual QA.
+Compatible with Windows, macOS, and Linux.
 """
 
 import sys
@@ -10,10 +11,11 @@ import ast
 import json
 import argparse
 import subprocess
+import re
 from pathlib import Path
 
 def audit_code_logic(target: str, test_mode: bool = False) -> dict:
-    """Audits code syntax, structure, and test execution."""
+    """Audits code syntax, structural integrity, and potential defect patterns."""
     logic_report = {
         "status": "PASS",
         "violations": [],
@@ -22,7 +24,6 @@ def audit_code_logic(target: str, test_mode: bool = False) -> dict:
     }
 
     if test_mode:
-        # Synthetic code audit test
         sample_code = "def hello():\n    return 'world'\n"
         try:
             ast.parse(sample_code)
@@ -44,32 +45,63 @@ def audit_code_logic(target: str, test_mode: bool = False) -> dict:
     if target_path.is_file():
         files_to_check.append(target_path)
     else:
-        # Scan files in directory (shallow/targeted)
-        for ext in ["*.py", "*.json", "*.js", "*.ts"]:
-            files_to_check.extend(list(target_path.glob(ext))[:20])
+        # Scan files in directory (targeted scan across standard extensions)
+        for ext in ["*.py", "*.json", "*.js", "*.ts", "*.tsx", "*.jsx", "*.go", "*.rs", "*.java", "*.html"]:
+            files_to_check.extend(list(target_path.glob(ext))[:30])
 
     for file in files_to_check:
         suffix = file.suffix.lower()
+        try:
+            with open(file, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except Exception as e:
+            logic_report["status"] = "RETRY"
+            logic_report["violations"].append(f"Read error in {file.name}: {str(e)}")
+            continue
+
+        # 1. Python AST Validation
         if suffix == ".py":
             try:
-                with open(file, "r", encoding="utf-8") as f:
-                    content = f.read()
                 ast.parse(content, filename=str(file))
             except SyntaxError as e:
                 logic_report["status"] = "RETRY"
                 logic_report["violations"].append(f"SyntaxError in {file.name}: {e.msg} at line {e.lineno}")
                 logic_report["suggested_fixes"].append(f"Fix syntax error in {file.name} line {e.lineno}")
-            except Exception as e:
-                logic_report["status"] = "RETRY"
-                logic_report["violations"].append(f"Read error in {file.name}: {str(e)}")
-        elif suffix == ".json":
+
+        # 2. JSON Validation
+        elif suffix in [".json", ".jsonc"]:
             try:
-                with open(file, "r", encoding="utf-8") as f:
-                    json.load(f)
+                clean_content = re.sub(r"^\s*//.*$", "", content, flags=re.MULTILINE)
+                json.loads(clean_content)
             except json.JSONDecodeError as e:
                 logic_report["status"] = "RETRY"
                 logic_report["violations"].append(f"JSONDecodeError in {file.name}: {e.msg} at line {e.lineno}")
                 logic_report["suggested_fixes"].append(f"Ensure valid JSON formatting in {file.name}")
+
+        # 3. Delimiter & String Balancer for TypeScript / JavaScript / Rust / Go / Java
+        elif suffix in [".js", ".jsx", ".ts", ".tsx", ".rs", ".go", ".java"]:
+            stack = []
+            matching = {')': '(', '}': '{', ']': '['}
+            in_string = False
+            string_char = ''
+            for idx, char in enumerate(content):
+                if char in ['"', "'", '`'] and (idx == 0 or content[idx-1] != '\\'):
+                    if not in_string:
+                        in_string = True
+                        string_char = char
+                    elif string_char == char:
+                        in_string = False
+                elif not in_string:
+                    if char in matching.values():
+                        stack.append((char, idx))
+                    elif char in matching:
+                        if not stack or stack[-1][0] != matching[char]:
+                            logic_report["status"] = "RETRY"
+                            logic_report["violations"].append(f"Unmatched closing bracket '{char}' in {file.name}")
+                            logic_report["suggested_fixes"].append(f"Balance delimiters in {file.name}")
+                            break
+                        else:
+                            stack.pop()
 
     return logic_report
 
@@ -132,7 +164,7 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
         "suggested_fixes": []
     }
 
-    # 1. Logic Critique
+    # 1. Logic & AST Critique
     if mode in ["logic", "all"]:
         logic_res = audit_code_logic(target, test_mode=test_mode)
         if logic_res["status"] == "RETRY":
@@ -157,10 +189,10 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
     return report
 
 def main():
-    parser = argparse.ArgumentParser(description="Antigravity Critic Loop Runner")
+    parser = argparse.ArgumentParser(description="Antigravity Critic Loop Runner (Claude Opus 5.5 Standard)")
     parser.add_argument("--mode", choices=["logic", "visual", "all"], default="all", help="Critic evaluation mode")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
-    parser.add_argument("target", nargs="?", default="", help="File or URL target")
+    parser.add_argument("target", nargs="?", default="", help="File or directory target")
 
     args = parser.parse_args()
     is_test = args.test_mode or (args.target == "--test-mode")

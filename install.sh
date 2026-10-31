@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Antigravity Dev Suite — 1-Click Installer for macOS & Linux
+# Claude Opus 5.5 Coding Standard & Cross-Platform Engine
 # ==============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 GEMINI_HOME="${HOME}/.gemini"
 CONFIG_DIR="${GEMINI_HOME}/config"
 PLUGINS_DIR="${CONFIG_DIR}/plugins"
