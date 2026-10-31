@@ -6,9 +6,27 @@ Antigravity Auto-Debug & Visual QA Hook Runner (Cross-Platform PostToolUse Handl
 
 import sys
 import os
+import ast
 import json
 import tempfile
 from pathlib import Path
+
+def validate_code_file(file_path: Path):
+    """Fast non-blocking syntax probe for modified source files."""
+    suffix = file_path.suffix.lower()
+    if suffix == ".py":
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            ast.parse(content, filename=str(file_path))
+        except SyntaxError:
+            pass
+    elif suffix == ".json":
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                json.load(f)
+        except json.JSONDecodeError:
+            pass
 
 def main():
     # 1. Feature Flag check
@@ -43,10 +61,11 @@ def main():
     if not changed_file and len(sys.argv) > 1:
         changed_file = sys.argv[1]
 
-    # 4. Trigger actions on modified frontend files
+    # 4. Trigger actions on modified files
     if changed_file:
         file_path = Path(changed_file)
         if file_path.is_file():
+            # A. Frontend Visual QA Trigger
             frontend_exts = {".html", ".htm", ".svg", ".css", ".jsx", ".tsx", ".vue", ".svelte"}
             if file_path.suffix.lower() in frontend_exts:
                 scripts_dir = Path(__file__).resolve().parent
@@ -57,6 +76,9 @@ def main():
                     capture_visual_artifacts(str(file_path), output_dir)
                 except Exception:
                     pass
+            # B. Backend Code Syntax Validation
+            else:
+                validate_code_file(file_path)
 
 if __name__ == "__main__":
     try:
