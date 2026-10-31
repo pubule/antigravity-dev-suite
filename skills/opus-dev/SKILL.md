@@ -23,7 +23,7 @@ flowchart TD
 ---
 
 ### Phase 1: Rapid Design & KISS/YAGNI Gate (Inspired by `/brainstorm`)
-- **Zero Filler**: Start immediately with technical analysis.
+- **Zero Filler (ASD-STE100)**: Start immediately with structured technical analysis.
 - **KISS & YAGNI Check**: Choose the simplest design with the minimum number of moving parts. Avoid speculative abstractions or forward-looking configuration bloat.
 - **Negative Constraints Matrix**: Verify public API stability and forbidden patterns.
 
@@ -49,6 +49,6 @@ flowchart TD
   - Re-verify in a closed loop (up to 3 autonomous cycles) until 100% green.
 
 ### Phase 5: Adversarial Review & Visual QA (`/code-review`, `/visual-qa`)
-- **Backend / Logic**: Run 4-pass audit via `claude-critic` (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Strict Typing).
+- **Backend / Logic**: Run 4-pass audit via `claude-critic` (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Strict Typing & ASD-STE100).
 - **Frontend / UI**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and review via `visual-qa-critic`.
-- **Delivery**: Present conclusive terminal verification evidence.
+- **Delivery**: Present conclusive terminal verification evidence in clear ASD-STE100 format.

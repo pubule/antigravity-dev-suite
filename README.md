@@ -1,7 +1,16 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 Standard v1.4.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.5.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
-Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, and the **Claude Opus 5.5 Standard**, specifically calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
+Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Specially calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
+
+---
+
+## 📐 ASD-STE100 Technical Communication Standard
+The suite strictly enforces ASD-STE100 across all agent interactions, diagnostic reports, and code comments:
+- **Active Voice & Imperative Mood**: Direct procedural instructions (`Execute test suite`, `Validate inputs`).
+- **Controlled Sentence Length**: Maximum 20 words per procedural instruction, maximum 25 words per descriptive sentence.
+- **Unambiguous Terminology**: One word = one meaning; zero conversational filler, jargon, or pleasantries.
+- **Deterministic Tables & Schemas**: Dense tabular outputs, atomic tasks, and clickable markdown links.
 
 ---
 
@@ -43,7 +52,7 @@ Every skill in the suite is exposed as a first-class native slash command in Ant
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.4.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.5.0)
 ├── hooks.json                  # Root PostToolUse hook configuration (Universal dispatch)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)

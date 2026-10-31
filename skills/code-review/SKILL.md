@@ -36,9 +36,10 @@ flowchart TD
 - **Injection Defense**: Are SQL/NoSQL queries parameterized? Is command execution safe?
 - **Input Sanitization**: Are user-provided strings validated and sanitized against XSS/SSRF/Prototype Pollution?
 
-### Pass 4: Strict Typing & Code Cleanliness
+### Pass 4: Strict Typing, Hygiene & ASD-STE100 Compliance
 - **Strict Types**: Are all function signatures, return types, and variables typed (no unwarranted `any`)?
 - **Dead Code**: Are there leftover `console.log`, `print()`, debug breakpoints, or unused imports?
+- **ASD-STE100 Compliance**: Are comments, docstrings, and diagnostic messages written in Simplified Technical English (imperative mood, concise sentences $\le 20\text{ words}$, zero colloquialisms)?
 
 ---
 

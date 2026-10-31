@@ -29,9 +29,10 @@ Systematically inspect the solution across the following 7 pillars:
 5. **Security Audit (OWASP Top 10)**:
    - Check for SQL/NoSQL injection, command injection, XSS, SSRF, prototype pollution, and hardcoded secrets.
 
-6. **Type Safety & Code Cleanliness**:
+6. **Type Safety, Cleanliness & ASD-STE100 Compliance**:
    - Are types strict and comprehensive (no unwarranted `any`, proper generics, full type signatures)?
    - Is the code free of dead code, debug statements, and unnecessary boilerplate?
+   - Do code comments and diagnostic messages follow ASD-STE100 (imperative mood, max 20-25 words per sentence, unambiguous terminology)?
 
 7. **TDD & Test Coverage**:
    - Are there comprehensive automated tests covering both happy paths and edge cases?

@@ -1,11 +1,14 @@
-# 🧠 Team Project Directives & Autonomous Quality Mandate (Claude Opus 5.5 Standard)
+# 🧠 Team Project Directives & Autonomous Quality Mandate (Claude Opus 5.5 + ASD-STE100)
 
 Welcome to the project! This repository uses the **Antigravity Dev Suite** standards to guarantee high architectural quality, automated testing, and visual defect elimination.
 
 ---
 
-## 1. Zero-Preamble & Technical Rigor
-- Keep responses direct, structured, and free of conversational filler.
+## 1. Zero-Preamble & ASD-STE100 Technical Communication
+- Follow Simplified Technical English (ASD-STE100) for all communication and comments.
+- Keep sentences short (max 20 words for instructions, max 25 words for descriptions).
+- Use active voice and imperative mood ("Run test command", not "The tests should be run").
+- Eliminate conversational pleasantries, qualifiers, and filler words.
 - Always provide fully typed, defensively written code with explicit file links.
 - Check and enforce all negative constraints prior to writing code.
 
