@@ -17,15 +17,9 @@ if [ -L "${TARGET_PLUGIN_DIR}" ] || [ -d "${TARGET_PLUGIN_DIR}" ]; then
   echo "[-] Removed plugin link: ${TARGET_PLUGIN_DIR}"
 fi
 
-# 2. Remove global rules copies if any
+# 2. Clean unbundled rules and agents if any
 rm -f "${CONFIG_DIR}/rules/claude_discipline.md" "${CONFIG_DIR}/rules/visual_qa_mandate.md" "${CONFIG_DIR}/rules/AGENTS.md"
-
-# 3. Remove global agents copies if any
 rm -f "${CONFIG_DIR}/agents/claude-critic.json" "${CONFIG_DIR}/agents/visual-qa-critic.json"
-rm -f "${CONFIG_DIR}/agents/claude-critic.md" "${CONFIG_DIR}/agents/visual-qa-critic.md"
-
-# 4. Remove hooks & scripts
-rm -f "${CONFIG_DIR}/hooks.json"
-rm -f "${CONFIG_DIR}/scripts/visual_qa.py" "${CONFIG_DIR}/scripts/auto_debug_runner.sh" "${CONFIG_DIR}/scripts/critic_loop.py" "${CONFIG_DIR}/scripts/clean_legacy_plugins.sh"
+rm -f "${CONFIG_DIR}/agents/claude-critic.md" "${CONFIG_DIR}/agents/visual-qa-critic.md" "${CONFIG_DIR}/agents/opus-architect.md"
 
 echo "=== Antigravity Dev Suite uninstalled successfully. ==="

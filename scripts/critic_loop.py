@@ -2,7 +2,7 @@
 """
 Antigravity Critic Loop Orchestrator (Cross-Platform)
 Executes deep verification and formats structured evaluation reports for logic, AST, and visual QA.
-Compatible with Windows, macOS, and Linux.
+Compatible with Windows 10/11, macOS, and Linux.
 """
 
 import sys
@@ -13,6 +13,22 @@ import argparse
 import subprocess
 import re
 from pathlib import Path
+
+IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", ".turbo"}
+
+def find_source_files(target_dir: Path) -> list[Path]:
+    """Recursively collects source files while skipping ignored directories."""
+    extensions = {".py", ".json", ".jsonc", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".html"}
+    files = []
+    
+    for root, dirs, filenames in os.walk(target_dir):
+        # Prune ignored directories in-place
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.startswith(".")]
+        for f in filenames:
+            p = Path(root) / f
+            if p.suffix.lower() in extensions:
+                files.append(p)
+    return files
 
 def audit_code_logic(target: str, test_mode: bool = False) -> dict:
     """Audits code syntax, structural integrity, and potential defect patterns."""
@@ -41,13 +57,10 @@ def audit_code_logic(target: str, test_mode: bool = False) -> dict:
         logic_report["suggested_fixes"].append("Provide a valid file or directory path")
         return logic_report
 
-    files_to_check = []
     if target_path.is_file():
-        files_to_check.append(target_path)
+        files_to_check = [target_path]
     else:
-        # Scan files in directory (targeted scan across standard extensions)
-        for ext in ["*.py", "*.json", "*.js", "*.ts", "*.tsx", "*.jsx", "*.go", "*.rs", "*.java", "*.html"]:
-            files_to_check.extend(list(target_path.glob(ext))[:30])
+        files_to_check = find_source_files(target_path)
 
     for file in files_to_check:
         suffix = file.suffix.lower()
@@ -84,24 +97,69 @@ def audit_code_logic(target: str, test_mode: bool = False) -> dict:
             matching = {')': '(', '}': '{', ']': '['}
             in_string = False
             string_char = ''
-            for idx, char in enumerate(content):
-                if char in ['"', "'", '`'] and (idx == 0 or content[idx-1] != '\\'):
-                    if not in_string:
-                        in_string = True
-                        string_char = char
-                    elif string_char == char:
-                        in_string = False
-                elif not in_string:
+            in_single_comment = False
+            in_multi_comment = False
+            i = 0
+            n = len(content)
+
+            while i < n:
+                char = content[i]
+                next_char = content[i + 1] if i + 1 < n else ''
+
+                if in_single_comment:
+                    if char == '\n':
+                        in_single_comment = False
+                    i += 1
+                    continue
+                if in_multi_comment:
+                    if char == '*' and next_char == '/':
+                        in_multi_comment = False
+                        i += 2
+                        continue
+                    i += 1
+                    continue
+
+                if not in_string:
+                    if char == '/' and next_char == '/':
+                        in_single_comment = True
+                        i += 2
+                        continue
+                    if char == '/' and next_char == '*':
+                        in_multi_comment = True
+                        i += 2
+                        continue
+
+                if char in ['"', "'", '`']:
+                    is_escaped = (i > 0 and content[i - 1] == '\\' and (i < 2 or content[i - 2] != '\\'))
+                    if not is_escaped:
+                        if not in_string:
+                            in_string = True
+                            string_char = char
+                        elif string_char == char:
+                            in_string = False
+                    i += 1
+                    continue
+
+                if not in_string:
                     if char in matching.values():
-                        stack.append((char, idx))
+                        line_num = content.count('\n', 0, i) + 1
+                        stack.append((char, line_num))
                     elif char in matching:
+                        line_num = content.count('\n', 0, i) + 1
                         if not stack or stack[-1][0] != matching[char]:
                             logic_report["status"] = "RETRY"
-                            logic_report["violations"].append(f"Unmatched closing bracket '{char}' in {file.name}")
+                            logic_report["violations"].append(f"Unmatched closing delimiter '{char}' in {file.name} at line {line_num}")
                             logic_report["suggested_fixes"].append(f"Balance delimiters in {file.name}")
                             break
                         else:
                             stack.pop()
+                i += 1
+
+            if stack and logic_report["status"] != "RETRY":
+                unclosed, line_num = stack[-1]
+                logic_report["status"] = "RETRY"
+                logic_report["violations"].append(f"Unclosed delimiter '{unclosed}' in {file.name} opened at line {line_num}")
+                logic_report["suggested_fixes"].append(f"Close delimiter '{unclosed}' in {file.name}")
 
     return logic_report
 

@@ -2,33 +2,40 @@
 """
 Enterprise Playwright Visual QA Runner for Antigravity & Gemini
 Captures desktop (1280x800) and mobile (375x667) screenshots, JS console errors, and page defects.
+Compatible with macOS, Linux, and Windows 10/11.
 """
 
 import sys
 import os
 import json
-import socket
+import urllib.request
+import urllib.error
 import argparse
 import tempfile
 from pathlib import Path
 
 COMMON_DEV_PORTS = [5173, 3000, 8080, 4200, 8000, 3001, 5000, 8081, 19006]
 
-def is_port_open(port: int, host: str = "127.0.0.1") -> bool:
+def is_http_server_active(port: int, host: str = "127.0.0.1") -> bool:
+    """Verifies that the port is actively serving HTTP responses."""
+    url = f"http://{host}:{port}/"
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.3)
-            return s.connect_ex((host, port)) == 0
+        req = urllib.request.Request(url, headers={"User-Agent": "Antigravity-VisualQA-Probe"})
+        with urllib.request.urlopen(req, timeout=0.6) as resp:
+            return resp.status in [200, 301, 302, 304, 404]
+    except urllib.error.HTTPError as e:
+        return e.code in [200, 301, 302, 304, 404]
     except Exception:
         return False
 
 def find_active_dev_server() -> str:
+    """Finds first active local development HTTP server."""
     for port in COMMON_DEV_PORTS:
-        if is_port_open(port):
+        if is_http_server_active(port):
             return f"http://localhost:{port}"
     return ""
 
-def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = False):
+def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = False) -> int:
     result = {
         "target": target,
         "status": "SUCCESS",
@@ -74,7 +81,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
         url = target
     else:
         file_path = Path(target).resolve()
-        # If it's a frontend source file (tsx/jsx/vue/svelte) that cannot run via file://
+        # If it's a frontend source file (tsx/jsx/vue/svelte) that cannot run directly via file://
         if file_path.suffix.lower() in [".tsx", ".jsx", ".vue", ".svelte", ".ts"]:
             active_server = find_active_dev_server()
             if active_server:
@@ -108,7 +115,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
     try:
         with sync_playwright() as p:
             # Platform-adaptive Chromium launch flags
-            base_args = [
+            launch_args = [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-gpu",
@@ -116,13 +123,13 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                 "--ignore-certificate-errors",
             ]
             if sys.platform == "darwin":
-                # macOS sandbox requires single-process to bypass Mach port rendezvous restriction
-                base_args.append("--single-process")
+                # Handle macOS sandbox Mach port rendezvous isolation
+                launch_args.append("--single-process")
 
             try:
-                browser = p.chromium.launch(headless=True, args=base_args)
+                browser = p.chromium.launch(headless=True, args=launch_args)
             except Exception:
-                # Fallback launch strategy for Windows / Linux / fallback environments
+                # Fallback launch args
                 fallback_args = ["--no-sandbox", "--disable-dev-shm-usage"]
                 browser = p.chromium.launch(headless=True, args=fallback_args)
 
@@ -136,7 +143,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                 else None,
             )
 
-            # Navigate once
+            # Navigate to target
             page.goto(url, wait_until="load", timeout=12000)
             page.wait_for_timeout(400)
 

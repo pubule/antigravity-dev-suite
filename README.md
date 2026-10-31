@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.5.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.5.1)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Specially calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -42,9 +42,9 @@ Every skill in the suite is exposed as a first-class native slash command in Ant
 
 ## 🌐 100% Cross-Platform Native Architecture
 
-- **🍎 macOS (Apple Silicon & Intel)**: Adaptive Chromium launcher resolving macOS Mach Port rendezvous sandbox restrictions automatically.
+- **🍎 macOS (Apple Silicon & Intel)**: Adaptive Chromium launcher with single-process isolation for sandboxed execution and HTTP port probing.
 - **🐧 Linux (Debian, Ubuntu, RHEL, Fedora, Arch, Alpine)**: Memory-isolated headless browser runner with non-blocking fallback-safe execution.
-- **🪟 Windows 10/11 (PowerShell 5.1 & 7+)**: 1-click installation via native NTFS Directory Junctions (`New-Item -ItemType Junction`) without requiring admin rights or Developer Mode; native PowerShell cleanup of legacy conflicting plugins.
+- **🪟 Windows 10/11 (PowerShell 5.1 & 7+)**: 1-click installation via native NTFS Directory Junctions (`New-Item -ItemType Junction`) without requiring admin rights or Developer Mode.
 
 ---
 
@@ -52,7 +52,7 @@ Every skill in the suite is exposed as a first-class native slash command in Ant
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.5.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.5.1)
 ├── hooks.json                  # Root PostToolUse hook configuration (Universal dispatch)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)
@@ -70,11 +70,13 @@ antigravity-dev-suite/
 │   ├── refactor/SKILL.md       # /refactor: Safe tech debt remediation with invariants
 │   └── visual-qa/SKILL.md      # /visual-qa: Dual-viewport Playwright visual QA skill
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
-│   ├── auto_debug_runner.py    # Universal PostToolUse hook processor & multi-lang probe
+│   ├── auto_debug_runner.py    # Universal PostToolUse hook processor & syntax validator
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
 │   ├── visual_qa.py            # Playwright dual-viewport screenshot engine (Platform-adaptive)
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
+├── tests/                      # Automated Verification & TDD Suite
+│   └── test_plugin_suite.py    # Full unit and integration test suite
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux
@@ -121,17 +123,17 @@ To enable these rules, skills, and subagents for all team members on a specific 
 
 ## 🛠️ Testing & Verification Suite
 
-Execute the built-in self-test verification commands:
+Execute the built-in automated test suite:
 
 ```bash
-# Test Visual QA Screenshot Engine (Platform-Adaptive)
+# Run Complete Test Suite
+python3 tests/test_plugin_suite.py
+
+# Test Visual QA Screenshot Engine directly
 python3 scripts/visual_qa.py --test-mode
 
-# Test Critic Loop Orchestrator (Opus 5.5 Standard)
+# Test Critic Loop Orchestrator
 python3 scripts/critic_loop.py --mode all --test-mode
-
-# Test Cross-Platform Hook Runner
-echo '{"toolCall": {"name": "write_file", "args": {"Path": "/tmp/test.py"}}}' | python3 scripts/auto_debug_runner.py
 ```
 
 ---

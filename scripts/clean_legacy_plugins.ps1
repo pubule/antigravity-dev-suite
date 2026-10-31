@@ -37,24 +37,24 @@ if (Test-Path $ConfigFile) {
     }
 }
 
-# 3. Clean up conflicting plugin symlinks / junctions
+# 3. Clean up conflicting plugin junctions
 $pluginsToRemove = @("ponytail", "skill-anything", "opencode-agy")
 foreach ($plugin in $pluginsToRemove) {
     $pluginPath = Join-Path $PluginsDir $plugin
     if (Test-Path $pluginPath) {
         cmd /c rmdir "$pluginPath" 2>$null
-        if (Test-Path $pluginPath) {
-            Remove-Item -Path $pluginPath -Recurse -Force
-        }
-        Write-Host "[-] Removed legacy plugin dir/junction: $pluginPath" -ForegroundColor Yellow
+        Write-Host "[-] Removed legacy plugin junction: $pluginPath" -ForegroundColor Yellow
     }
 }
 
-# 4. Clean up legacy disabled superpowers
-$disabledSuperpowers = Join-Path $GeminiHome "plugins_disabled\superpowers"
-if (Test-Path $disabledSuperpowers) {
-    Remove-Item -Path $disabledSuperpowers -Recurse -Force
-    Write-Host "[-] Removed legacy disabled superpowers directory" -ForegroundColor Yellow
+# 4. Clean up legacy unbundled rule files
+$rulesToClean = @("claude_discipline.md", "visual_qa_mandate.md")
+foreach ($rule in $rulesToClean) {
+    $rulePath = Join-Path $ConfigDir "rules\$rule"
+    if (Test-Path $rulePath) {
+        Remove-Item -Path $rulePath -Force
+        Write-Host "[-] Removed legacy unbundled rule: $rulePath" -ForegroundColor Yellow
+    }
 }
 
 Write-Host "=== [2/3] Windows Legacy Cleanup Completed Successfully ===" -ForegroundColor Green

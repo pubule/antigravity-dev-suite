@@ -49,32 +49,26 @@ except Exception:
     pass
 " "${CONFIG_FILE}" 2>/dev/null || true
     echo "[+] Disabled conflicting plugins (ponytail, superpowers, skill-anything, opencode-agy) in config.json"
-  elif command -v jq >/dev/null 2>&1; then
-    TMP_CONFIG=$(mktemp)
-    (jq '
-      .plugins["ponytail"].enabled = false |
-      .plugins["superpowers"].enabled = false |
-      .plugins["skill-anything"].enabled = false |
-      .plugins["opencode-agy"].enabled = false
-    ' "${CONFIG_FILE}" > "${TMP_CONFIG}" && mv "${TMP_CONFIG}" "${CONFIG_FILE}") 2>/dev/null || true
-    echo "[+] Disabled conflicting plugins via jq in config.json"
   fi
 fi
 
-# 3. Clean up conflicting plugin symlinks/directories
+# 3. Clean up conflicting plugin symlinks
 PLUGINS_TO_REMOVE=("ponytail" "skill-anything" "opencode-agy")
 for plugin in "${PLUGINS_TO_REMOVE[@]}"; do
   PLUGIN_PATH="${PLUGINS_DIR}/${plugin}"
-  if [ -L "${PLUGIN_PATH}" ] || [ -d "${PLUGIN_PATH}" ]; then
-    rm -rf "${PLUGIN_PATH}" 2>/dev/null || true
-    echo "[-] Removed plugin link/dir: ${PLUGIN_PATH}"
+  if [ -L "${PLUGIN_PATH}" ]; then
+    rm -f "${PLUGIN_PATH}" 2>/dev/null || true
+    echo "[-] Removed legacy plugin link: ${PLUGIN_PATH}"
   fi
 done
 
-# 4. Clean up legacy disabled superpowers if present
-if [ -d "${HOME}/.gemini/plugins_disabled/superpowers" ]; then
-  rm -rf "${HOME}/.gemini/plugins_disabled/superpowers" 2>/dev/null || true
-  echo "[-] Removed legacy disabled superpowers directory"
-fi
+# 4. Clean up legacy unbundled rule files
+for old_rule in "claude_discipline.md" "visual_qa_mandate.md"; do
+  OLD_RULE_PATH="${GEMINI_CONFIG_DIR}/rules/${old_rule}"
+  if [ -f "${OLD_RULE_PATH}" ]; then
+    rm -f "${OLD_RULE_PATH}" 2>/dev/null || true
+    echo "[-] Removed legacy unbundled rule: ${OLD_RULE_PATH}"
+  fi
+done
 
 echo "=== [2/3] Legacy Cleanup Completed Successfully ==="
