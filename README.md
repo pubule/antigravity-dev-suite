@@ -61,9 +61,17 @@ flowchart TD
 
 ## 🌐 100% Cross-Platform Native Architecture
 
-- **🍎 macOS (Apple Silicon & Intel)**: Adaptive Chromium launcher with process isolation for sandboxed execution and rapid non-blocking dual-stack socket probing.
-- **🐧 Linux (Debian, Ubuntu, RHEL, Fedora, Arch, Alpine)**: Memory-isolated headless browser runner with non-blocking fallback-safe execution.
-- **🪟 Windows 10/11 (PowerShell 5.1 & 7+)**: 1-click installation via native NTFS Directory Junctions (`New-Item -ItemType Junction`) and BOM-less UTF-8 configuration writing.
+The suite operates across all major operating systems without native compilation dependencies:
+
+| Operating System | Architecture / Shell | Linking Mechanism | Permissions & Requirements |
+| :--- | :--- | :--- | :--- |
+| **🍎 macOS** | Intel x86_64, Apple Silicon (M1/M2/M3/M4) / `zsh`, `bash` | POSIX Symbolic Link (`ln -sf`) | Python 3.10+, User permissions |
+| **🐧 Linux** | Debian, Ubuntu, RHEL, Fedora, Arch, Alpine / `bash` | POSIX Symbolic Link (`ln -sf`) | Python 3.10+, User permissions |
+| **🪟 Windows 10/11** | x86_64, ARM64 / PowerShell 5.1 & PowerShell Core 7+ | Native NTFS Directory Junction | Python 3.10+, **No Administrator required** |
+
+- **Pure Python Standard Library**: Core runtime scripts ([`validator_core.py`](scripts/validator_core.py), [`critic_loop.py`](scripts/critic_loop.py), [`semantic_slice.py`](scripts/semantic_slice.py), [`api_contract_guard.py`](scripts/api_contract_guard.py)) use only Python built-in modules (`ast`, `re`, `json`, `pathlib`).
+- **Zero Windows Developer Mode Requirement**: Windows uses native NTFS Directory Junctions (`New-Item -ItemType Junction`) avoiding Developer Mode or elevated Administrator prompts.
+- **Resilient Fallback Design**: Playwright is used for visual QA; when unavailable, all linting, TDD, auto-debug, and code review capabilities remain 100% operational.
 
 ---
 
@@ -131,7 +139,11 @@ antigravity-dev-suite/
 
 ### 🍎 macOS & 🐧 Linux
 ```bash
+# Clone repository
+git clone https://ghb.internal.unicreditgroup.eu/scm/~c332376/antigravity-dev-suite.git
 cd antigravity-dev-suite
+
+# Run 1-Click installer
 chmod +x install.sh
 ./install.sh
 
@@ -142,11 +154,45 @@ chmod +x install.sh
 
 ### 🪟 Windows (PowerShell 5.1 / 7+)
 ```powershell
+# Clone repository
+git clone https://ghb.internal.unicreditgroup.eu/scm/~c332376/antigravity-dev-suite.git
 cd antigravity-dev-suite
+
+# Run 1-Click installer
 .\install.ps1
 
 # Optional: Install Playwright Chromium browser binaries
 .\install.ps1 -WithBrowsers
+```
+
+---
+
+## 🔄 Updating to Latest Version
+
+Because installation creates a symbolic link (macOS/Linux) or NTFS Directory Junction (Windows) pointing directly to the Git repository folder, updates become **active immediately** in Antigravity without reinstalling.
+
+### macOS & Linux
+```bash
+# 1. Navigate to the local repository directory
+cd /path/to/antigravity-dev-suite
+
+# 2. Pull latest commits from main branch
+git pull origin main
+
+# 3. Verify suite integrity (optional)
+python3 tests/test_plugin_suite.py
+```
+
+### Windows (PowerShell)
+```powershell
+# 1. Navigate to the local repository directory
+cd C:\path\to\antigravity-dev-suite
+
+# 2. Pull latest commits from main branch
+git pull origin main
+
+# 3. Verify suite integrity (optional)
+python tests\test_plugin_suite.py
 ```
 
 ---
