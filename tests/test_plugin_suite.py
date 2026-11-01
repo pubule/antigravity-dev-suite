@@ -3683,6 +3683,16 @@ def test_handoff_generator():
     assert code == 0, f"auto_debug_runner.py --handoff failed: {stderr}"
     assert "Session handoff generated:" in stdout or "SUCCESS" in stdout
 
+    # 6. Context Window Occupancy Telemetry
+    occ = handoff.get_context_occupancy()
+    assert "status" in occ
+    assert "occupancy_percentage" in occ
+    assert "compaction_threshold" in occ
+
+    code_ctx, out_ctx, err_ctx = run_script("auto_debug_runner.py", ["--context"])
+    assert code_ctx == 0, f"auto_debug_runner.py --context failed: {err_ctx}"
+    assert "Context Window Occupancy:" in out_ctx
+
 import unittest
 
 class AntigravityDevSuiteTestCase(unittest.TestCase):

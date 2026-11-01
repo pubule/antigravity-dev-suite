@@ -133,6 +133,104 @@ def get_git_context(ws_dir: Path) -> Dict[str, Any]:
     return ctx
 
 
+def get_context_occupancy(
+    app_data_dir: Optional[str] = None,
+    conversation_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Extracts live context window occupancy and token telemetry from transcript. # safe-bounds"""
+    app_data = Path(app_data_dir or os.getenv("ANTIGRAVITY_APP_DATA_DIR") or (Path.home() / ".gemini" / "antigravity-cli"))
+    conv_id = conversation_id or os.getenv("ANTIGRAVITY_CONVERSATION_ID")
+
+    transcript_path: Optional[Path] = None
+    if conv_id:
+        cand = app_data / "brain" / conv_id / ".system_generated" / "logs" / "transcript.jsonl"
+        if cand.exists():
+            transcript_path = cand
+
+    if not transcript_path:
+        brain_dir = app_data / "brain"
+        if brain_dir.is_dir():
+            candidates = sorted(
+                brain_dir.glob("*/.system_generated/logs/transcript.jsonl"),
+                key=lambda x: x.stat().st_mtime if x.exists() else 0,
+                reverse=True
+            )
+            if candidates:
+                transcript_path = candidates[0]
+
+    telemetry: Dict[str, Any] = {
+        "tracked": False,
+        "input_tokens": 0,
+        "cache_read_tokens": 0,
+        "total_prompt_tokens": 0,
+        "output_tokens": 0,
+        "step_index": 0,
+        "compaction_threshold": 100000,
+        "occupancy_percentage": 0.0,
+        "status": "UNKNOWN",
+        "recommendation": "Context telemetry not available.",
+    }
+
+    if not transcript_path or not transcript_path.exists():
+        return telemetry
+
+    try:
+        file_size = transcript_path.stat().st_size
+        read_size = min(file_size, 65536)
+        with open(transcript_path, "r", encoding="utf-8", errors="ignore") as f:
+            if file_size > read_size:
+                f.seek(file_size - read_size)
+            lines = f.readlines()
+
+        last_tokens: Optional[Dict[str, Any]] = None
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                if "input_tokens" in data or "cache_read_tokens" in data:
+                    last_tokens = data
+            except Exception:
+                continue
+
+        if last_tokens:
+            inp = int(last_tokens.get("input_tokens", 0) or 0)
+            cache = int(last_tokens.get("cache_read_tokens", 0) or 0)
+            out = int(last_tokens.get("output_tokens", 0) or 0)
+            total = inp + cache
+            step = int(last_tokens.get("step_index", 0) or 0)
+            threshold = 100000
+            pct = round((total / threshold) * 100, 1)
+
+            if total >= 80000:
+                status = "CRITICAL"
+                rec = "Context occupancy is high (≥80k tokens). High risk of compaction or slowdown. Hand off session now."
+            elif total >= 50000:
+                status = "MODERATE"
+                rec = "Context occupancy is moderate (≥50k tokens). Consider /handoff at next milestone."
+            else:
+                status = "HEALTHY"
+                rec = "Context occupancy is healthy (<50k tokens). Normal execution."
+
+            telemetry.update({
+                "tracked": True,
+                "input_tokens": inp,
+                "cache_read_tokens": cache,
+                "total_prompt_tokens": total,
+                "output_tokens": out,
+                "step_index": step,
+                "compaction_threshold": threshold,
+                "occupancy_percentage": pct,
+                "status": status,
+                "recommendation": rec,
+            })
+    except Exception as e:
+        sys.stderr.write(f"[handoff] Context tracking notice: {e}\n")
+
+    return telemetry
+
+
 def infer_suggested_skills(
     git_ctx: Dict[str, Any],
     test_run: Optional[Dict[str, Any]],
@@ -165,7 +263,8 @@ def generate_handoff_markdown(
     git_ctx: Dict[str, Any],
     test_run: Optional[Dict[str, Any]],
     critic_run: Optional[Dict[str, Any]],
-    suggested_skills: List[Tuple[str, str]]
+    suggested_skills: List[Tuple[str, str]],
+    context_occupancy: Optional[Dict[str, Any]] = None
 ) -> str:
     """Generates an ASD-STE100 compliant markdown handoff document."""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
@@ -215,6 +314,15 @@ def generate_handoff_markdown(
         lines.append(f"| **Critic Audit** | `{c_stat}` | Violations: {c_viols} |")
     else:
         lines.append("| **Critic Audit** | `NONE` | No critic audit recorded in session |")
+
+    # Context occupancy row
+    if context_occupancy and context_occupancy.get("tracked"):
+        ctx_stat = context_occupancy.get("status", "UNKNOWN")
+        ctx_tok = context_occupancy.get("total_prompt_tokens", 0)
+        ctx_pct = context_occupancy.get("occupancy_percentage", 0.0)
+        lines.append(f"| **Context Window** | `{ctx_stat}` | {ctx_tok:,} tokens ({ctx_pct}% of ~100k threshold) |")
+    else:
+        lines.append("| **Context Window** | `NONE` | Transcript token telemetry not available |")
 
     lines.append("")
 
@@ -274,6 +382,7 @@ def create_handoff_file(
     git_ctx = get_git_context(ws)
     test_run = get_last_test_run()
     critic_run = get_last_critic_run()
+    ctx_occ = get_context_occupancy()
 
     if suggested_skills_override is not None:
         skills = suggested_skills_override
@@ -287,7 +396,8 @@ def create_handoff_file(
         git_ctx=git_ctx,
         test_run=test_run,
         critic_run=critic_run,
-        suggested_skills=skills
+        suggested_skills=skills,
+        context_occupancy=ctx_occ
     )
 
     if output_path:
@@ -307,6 +417,7 @@ def create_handoff_file(
         "handoff_file": str(target_file),
         "target_goal": clean_goal,
         "suggested_skills": [cmd for cmd, _ in skills],
+        "context_occupancy": ctx_occ,
         "content_length": len(content),
     }
 
@@ -316,9 +427,24 @@ def main():
     parser.add_argument("goal", nargs="?", default="", help="Target goal or focus for the next session")
     parser.add_argument("--summary", "-s", default="", help="Contextual summary or technical implementation notes")
     parser.add_argument("--output", "-o", default="", help="Optional explicit output file path")
+    parser.add_argument("--stats", "--context", dest="stats", action="store_true", help="Print live context window occupancy and token telemetry")
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON format")
 
     args = parser.parse_args()
+
+    if args.stats:
+        stats = get_context_occupancy()
+        if args.json:
+            print(json.dumps(stats, indent=2))
+        else:
+            print("📊 Context Window Occupancy:")
+            print(f"  - Total Prompt Tokens: {stats['total_prompt_tokens']:,} (Input: {stats['input_tokens']:,}, Cache: {stats['cache_read_tokens']:,})")
+            print(f"  - Output Tokens:       {stats['output_tokens']:,}")
+            print(f"  - Step Index:          {stats['step_index']}")
+            print(f"  - Occupancy (~100k):   {stats['occupancy_percentage']}% [{stats['status']}]")
+            print(f"  - Recommendation:      {stats['recommendation']}")
+        return
+
     out_p = Path(args.output).resolve() if args.output else None
 
     res = create_handoff_file(

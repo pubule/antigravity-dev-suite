@@ -13,12 +13,28 @@ Use this skill when completing an agent session, hitting context boundaries, or 
 
 ```mermaid
 flowchart TD
-    H1["User Triggers /handoff [goal]"] --> H2["Inspect Active Git State & Telemetry"]
-    H2 --> H3["Scrub Sensitive Keys & Secrets (OWASP Rule 7)"]
-    H3 --> H4["Generate ASD-STE100 Briefing in OS Tempdir"]
-    H4 --> H5["Recommend Next Suggested Skills"]
-    H5 --> Done["✅ Display Handoff File Path & Next Steps"]
+    H0["0. Inspect Context Occupancy (python3 scripts/handoff.py --stats)"] --> H1["1. User Triggers /handoff [goal]"]
+    H1 --> H2["2. Inspect Active Git State & Telemetry"]
+    H2 --> H3["3. Scrub Sensitive Keys & Secrets (OWASP Rule 7)"]
+    H3 --> H4["4. Generate ASD-STE100 Briefing in OS Tempdir"]
+    H4 --> H5["5. Recommend Next Suggested Skills"]
+    H5 --> Done["✅ Display Handoff File Path & Clean Resume Command"]
 ```
+
+---
+
+### Step 0: Inspect Context Occupancy (Pre-Flight)
+Check current token telemetry and context window utilization before ending a session:
+```bash
+python3 scripts/handoff.py --stats
+# or via auto debug runner:
+python3 scripts/auto_debug_runner.py --context
+```
+| Occupancy Band | Token Range | Status | Action Required |
+| :--- | :--- | :--- | :--- |
+| **Healthy** | $< 50,000$ tokens | `HEALTHY` | Continue normal iteration in active session. |
+| **Moderate** | $50,000 - 80,000$ tokens | `MODERATE` | Hand off at next completed milestone. |
+| **Critical** | $\ge 80,000$ tokens | `CRITICAL` | Execute `/handoff` immediately to prevent context truncation. |
 
 ---
 
@@ -58,3 +74,11 @@ The created briefing document adheres to strict engineering invariants:
 
 ### Step 4: Present Output to User
 Output the absolute path to the generated handoff file and summarize the recommended starting command for the next session.
+
+---
+
+### Step 5: Resume Execution in New Agent Session
+1. Close or reset the conversation.
+2. In the fresh session (100% clean context), prompt:
+   `Leggi il briefing di handoff ed esegui i task: <path-to-handoff-file>`
+3. The incoming agent resumes work immediately with zero historical context bloat.

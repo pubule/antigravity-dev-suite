@@ -1191,6 +1191,24 @@ def handle_cli_mode() -> bool:
             print(f"Error generating session handoff: {e}", file=sys.stderr)
             sys.exit(1)
 
+    if first in ("--context", "--context-stats"):
+        try:
+            from handoff import get_context_occupancy
+            stats = get_context_occupancy()
+            if "--json" in args:
+                print(json.dumps(stats, indent=2))
+            else:
+                print("📊 Context Window Occupancy:")
+                print(f"  - Total Prompt Tokens: {stats['total_prompt_tokens']:,} (Input: {stats['input_tokens']:,}, Cache: {stats['cache_read_tokens']:,})")
+                print(f"  - Output Tokens:       {stats['output_tokens']:,}")
+                print(f"  - Step Index:          {stats['step_index']}")
+                print(f"  - Occupancy (~100k):   {stats['occupancy_percentage']}% [{stats['status']}]")
+                print(f"  - Recommendation:      {stats['recommendation']}")
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error inspecting context occupancy: {e}", file=sys.stderr)
+            sys.exit(1)
+
     if first in ("--filter-stream", "--condense"):
         max_lines = 30
         idx = 1
@@ -1292,6 +1310,7 @@ if __name__ == "__main__":
         "--detect-flaky", "--flaky",
         "--run-typecheck", "--typecheck", "--run-race", "--race", "--run-fuzz", "--fuzz",
         "--install-git-hooks", "--install-hook",
+        "--handoff", "--create-handoff", "--context", "--context-stats",
         "--filter-stream", "--condense"
     )
     try:
