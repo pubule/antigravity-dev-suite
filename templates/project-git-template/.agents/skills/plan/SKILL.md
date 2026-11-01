@@ -19,6 +19,7 @@ flowchart TD
 ```
 
 ### 1. File & Dependency Mapping
+Extract the codebase symbol topology using `python3 scripts/repo_map.py . --max-tokens 2048`.
 List the exact files to create or modify:
 - **Created**: e.g., `src/auth/jwt_provider.py`, `tests/test_jwt_provider.py`
 - **Modified**: e.g., `src/config.py`, `src/routes/api.py`

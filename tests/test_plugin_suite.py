@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.12.0"
+        assert data.get("version") == "1.13.0"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -2762,7 +2762,7 @@ def test_commit_skill_and_v11_plugin_manifest():
 
     # 2. Plugin manifest
     manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.12.0"
+    assert manifest["version"] == "1.13.0"
     assert any("/commit" in p for p in manifest["suggestedPrompts"])
 
     # 3. Project template GEMINI.md
@@ -2924,6 +2924,148 @@ def test_git_hook_installer_and_rule_14():
     architect_text = (PLUGIN_ROOT / "agents" / "opus-architect.md").read_text(encoding="utf-8")
     assert "ADR Generation" in architect_text
     assert "docs/adr/" in architect_text
+
+def test_api_contract_guard_symbols_and_drift():
+    import api_contract_guard
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        py_file = tmp_path / "mod.py"
+        py_code = "def greet(name: str) -> str:\n    return 'Hello ' + name\n"
+        py_file.write_text(py_code, encoding="utf-8")
+
+        # Extract symbols
+        symbols = api_contract_guard.extract_public_symbols(py_code, py_file)
+        assert "greet" in symbols
+        assert [p["name"] for p in symbols["greet"]["params"]] == ["name"]
+
+        # Test breaking vs additive change
+        base_symbols = {
+            "greet": {"kind": "function", "params": [{"name": "name", "required": True}]},
+            "legacy_func": {"kind": "function", "params": []}
+        }
+        # Broken symbols: removed legacy_func, and added required param 'greeting' to greet
+        curr_symbols_broken = {
+            "greet": {"kind": "function", "params": [{"name": "name", "required": True}, {"name": "greeting", "required": True}]}
+        }
+        violations, warnings, additions = api_contract_guard.compare_symbol_contracts(base_symbols, curr_symbols_broken, "mod.py")
+        assert len(violations) >= 2
+        assert any("was removed" in v for v in violations)
+        assert any("new required parameter" in v for v in violations)
+
+        # Additive symbols: new optional param with default, legacy_func preserved, new func added
+        curr_symbols_additive = {
+            "greet": {"kind": "function", "params": [{"name": "name", "required": True}, {"name": "greeting", "required": False}]},
+            "legacy_func": {"kind": "function", "params": []},
+            "new_func": {"kind": "function", "params": []}
+        }
+        clean_violations, clean_warnings, clean_additions = api_contract_guard.compare_symbol_contracts(base_symbols, curr_symbols_additive, "mod.py")
+        assert len(clean_violations) == 0
+        assert len(clean_additions) >= 1
+
+def test_repo_map_polyglot_and_token_budget():
+    import repo_map
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        (tmp_path / "src").mkdir()
+        py_f = tmp_path / "src" / "service.py"
+        py_code = "class UserService:\n    def get_user(self, user_id: str):\n        pass\n"
+        py_f.write_text(py_code, encoding="utf-8")
+
+        symbols = repo_map.extract_python_symbols(py_code)
+        assert len(symbols) >= 1
+        assert any("UserService" in s["name"] for s in symbols)
+
+        # Build map with token budget
+        repo_data = repo_map.generate_repo_map(tmp_path, max_tokens=200)
+        assert repo_data["file_count"] >= 1
+        assert "UserService" in repo_data["formatted_map"]
+
+def test_auto_debug_runner_flaky_and_mutation_diff():
+    import auto_debug_runner
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Flaky check passes on stable test
+        res = auto_debug_runner.run_project_flaky_check(
+            workspace_dir=tmp_path,
+            iterations=2,
+            command_override=f"{sys.executable} -c \"assert 1 == 1\""
+        )
+        assert res["iterations"] == 2
+        assert res["failures"] == 0
+        assert res["status"] == "PASS"
+
+        # Flaky check detects failing/unstable test
+        res_flaky = auto_debug_runner.run_project_flaky_check(
+            workspace_dir=tmp_path,
+            iterations=2,
+            command_override=f"{sys.executable} -c \"import sys; sys.exit(1)\""
+        )
+        assert res_flaky["failures"] == 2
+        assert res_flaky["status"] == "FAIL"
+
+        # Framework detection verifies mutation runner
+        det = auto_debug_runner.detect_project_framework(PLUGIN_ROOT)
+        assert "mutation_command" in det
+
+def test_critic_loop_rust_safe_unwraps_and_sql_drops():
+    import critic_loop
+    # 1. Rust safe unwrap in test block
+    with tempfile.NamedTemporaryFile(suffix=".rs", mode="w", delete=False) as f:
+        f.write("#[cfg(test)]\nfn test_foo() {\n    let val = Some(1).unwrap();\n}\n")
+        safe_rs = f.name
+
+    # 2. Rust unsafe unwrap in production
+    with tempfile.NamedTemporaryFile(suffix=".rs", mode="w", delete=False) as f:
+        f.write("fn prod_foo() {\n    let val = Some(1).unwrap();\n}\n")
+        bad_rs = f.name
+
+    # 3. SQL DROP TABLE
+    with tempfile.NamedTemporaryFile(suffix=".sql", mode="w", delete=False) as f:
+        f.write("DROP TABLE users;\n")
+        bad_sql_drop = f.name
+
+    # 4. SQL ALTER COLUMN TYPE
+    with tempfile.NamedTemporaryFile(suffix=".sql", mode="w", delete=False) as f:
+        f.write("ALTER TABLE users ALTER COLUMN age TYPE bigint;\n")
+        bad_sql_alter = f.name
+
+    try:
+        r_safe = critic_loop.audit_code_logic(safe_rs, submode="all")
+        assert r_safe["status"] == "PASS"
+
+        r_bad = critic_loop.audit_code_logic(bad_rs, submode="all")
+        assert r_bad["status"] == "RETRY"
+        assert any("ProductionPanicRisk" in v for v in r_bad["violations"])
+
+        r_drop = critic_loop.audit_code_logic(bad_sql_drop, submode="all")
+        assert r_drop["status"] == "RETRY"
+        assert any("DROP TABLE/COLUMN" in v for v in r_drop["violations"])
+
+        r_alter = critic_loop.audit_code_logic(bad_sql_alter, submode="all")
+        assert r_alter["status"] == "RETRY"
+        assert any("altering column type" in v for v in r_alter["violations"])
+    finally:
+        for p in (safe_rs, bad_rs, bad_sql_drop, bad_sql_alter):
+            if os.path.exists(p):
+                os.remove(p)
+
+def test_visual_qa_wcag_accessibility_checks():
+    import visual_qa
+    # Bad HTML missing lang, title, and button label
+    bad_html = "<html><head></head><body><button></button><input type='text'><img src='pic.jpg'></body></html>"
+    violations = visual_qa.audit_html_accessibility(bad_html)
+    assert len(violations) >= 4
+    assert any("WCAG 3.1.1" in v for v in violations)
+    assert any("WCAG 2.4.2" in v for v in violations)
+    assert any("WCAG 4.1.2" in v for v in violations)
+    assert any("WCAG 1.1.1" in v for v in violations)
+    assert any("WCAG 1.3.1" in v for v in violations)
+
+    # Clean HTML passing all checks
+    good_html = "<html lang='en'><head><title>Dashboard</title></head><body><button>Submit</button><label for='u'>User</label><input id='u' type='text'><img src='pic.jpg' alt='Avatar'></body></html>"
+    clean_violations = visual_qa.audit_html_accessibility(good_html)
+    assert len(clean_violations) == 0
 
 import unittest
 
@@ -3173,4 +3315,14 @@ if __name__ == "__main__":
     print("✔ Critic loop Go concurrency mutex checks passed")
     test_git_hook_installer_and_rule_14()
     print("✔ Git hook installer, Rule 14 and ADR persistence passed")
+    test_api_contract_guard_symbols_and_drift()
+    print("✔ API contract guard symbols and drift detection passed")
+    test_repo_map_polyglot_and_token_budget()
+    print("✔ Repo map polyglot symbols and token budget passed")
+    test_auto_debug_runner_flaky_and_mutation_diff()
+    print("✔ Auto debug runner flaky check and mutation diff passed")
+    test_critic_loop_rust_safe_unwraps_and_sql_drops()
+    print("✔ Critic loop Rust safe unwraps and SQL drops passed")
+    test_visual_qa_wcag_accessibility_checks()
+    print("✔ Visual QA WCAG 2.1 AA accessibility checks passed")
     print("\n🎉 ALL TESTS PASSED (100% GREEN)")

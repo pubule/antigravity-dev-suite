@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.12.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.13.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -71,7 +71,7 @@ flowchart TD
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.12.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.13.0)
 ├── hooks.json                  # Root PreToolUse & PostToolUse hook configuration
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)
@@ -102,18 +102,20 @@ antigravity-dev-suite/
 │           └── supply-chain.md # Dependency auditing, lockfile integrity, typosquatting
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
 │   ├── validator_core.py       # Core AST, regex, JSONC, polyglot raw strings, and delimiter parser
-│   ├── auto_debug_runner.py    # Universal PostToolUse hook processor, tests, typecheck, race & fuzz runner
+│   ├── auto_debug_runner.py    # Universal PostToolUse hook processor, tests, typecheck, race, fuzz & flaky runner
+│   ├── api_contract_guard.py   # Automated public API contract drift detector (Python, TS, Go, Rust)
+│   ├── repo_map.py             # Token-budgeted repository symbol and topology mapper
 │   ├── auto_debug_runner.sh    # Resilient Unix wrapper for auto-debug hook execution
 │   ├── install_git_hooks.py    # Native cross-platform pre-commit Git hook installer
 │   ├── pre_tool_guard.py       # PreToolUse safety guardrail (Blocks catastrophic commands & leaks)
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
-│   ├── visual_qa.py            # Playwright dual-viewport screenshot engine (Platform-adaptive)
+│   ├── visual_qa.py            # Playwright dual-viewport screenshot engine with WCAG 2.1 AA a11y audit
 │   ├── run_audit_loop.sh       # Multi-pass autonomous audit loop runner (Unix)
 │   ├── run_audit_loop.ps1      # Multi-pass autonomous audit loop runner (PowerShell)
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
 ├── tests/                      # Automated Verification & TDD Suite
-│   └── test_plugin_suite.py    # Full unit and integration test suite (115 automated checks)
+│   └── test_plugin_suite.py    # Full unit and integration test suite (240 automated checks)
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux
@@ -172,8 +174,13 @@ python3 scripts/auto_debug_runner.py --fuzz
 # Run test coverage analyzer
 python3 scripts/auto_debug_runner.py --coverage
 
-# Run mutation testing suite
+# Run mutation testing suite (full or diff-scoped)
 python3 scripts/auto_debug_runner.py --mutation
+python3 scripts/auto_debug_runner.py --mutation --diff
+
+# Run multi-iteration race and flaky test detector
+python3 scripts/auto_debug_runner.py --detect-flaky
+python3 scripts/auto_debug_runner.py --detect-flaky -n 5
 
 # Run detected microbenchmarks autonomously
 python3 scripts/auto_debug_runner.py --benchmark
@@ -221,17 +228,54 @@ python3 scripts/critic_loop.py --mode security --target .
 python3 scripts/critic_loop.py --mode all --test-mode
 ```
 
-### 4. Visual QA Runner (`visual_qa.py`)
+### 4. Public API Contract Drift Guard (`api_contract_guard.py`)
 ```bash
-# Capture dual-viewport screenshots against detected or default dev server
+# Audit workspace for breaking changes against git HEAD
+python3 scripts/api_contract_guard.py --target .
+
+# Audit against a specific git base reference (e.g. main branch)
+python3 scripts/api_contract_guard.py --base-ref main --target .
+
+# Compare two explicit files directly
+python3 scripts/api_contract_guard.py --base-file base.py --candidate-file new.py
+
+# Emit machine-readable JSON report
+python3 scripts/api_contract_guard.py --target . --json
+```
+
+### 5. Repository Topology Mapper (`repo_map.py`)
+```bash
+# Generate token-budgeted repository symbol map
+python3 scripts/repo_map.py .
+
+# Customize token budget limit (default: 2048)
+python3 scripts/repo_map.py . --max-tokens 4096
+
+# Restrict scan depth to maximum file count
+python3 scripts/repo_map.py . --max-files 200
+
+# Emit machine-readable JSON symbol map
+python3 scripts/repo_map.py . --json
+```
+
+### 6. Visual QA & WCAG 2.1 AA Accessibility Inspector (`visual_qa.py`)
+```bash
+# Capture dual-viewport screenshots and audit WCAG 2.1 AA accessibility
 python3 scripts/visual_qa.py
+
+# Inspect explicit target HTML file or URL
+python3 scripts/visual_qa.py index.html
+python3 scripts/visual_qa.py http://localhost:3000
 
 # Target specific dev server URL or port
 python3 scripts/visual_qa.py --dev-server http://localhost:5173
 python3 scripts/visual_qa.py --port 3000
+
+# Run in self-test synthetic mode
+python3 scripts/visual_qa.py --test-mode
 ```
 
-### 5. Autonomous Multi-Pass Audit Loops
+### 7. Autonomous Multi-Pass Audit Loops
 ```bash
 # Unix (macOS / Linux)
 ./scripts/run_audit_loop.sh -n 3 -m all -w .

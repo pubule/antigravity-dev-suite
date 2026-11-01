@@ -739,7 +739,35 @@ def run_project_coverage(workspace_dir: str | Path | None = None, command_overri
             "condensed_output": str(e)
         }
 
-def run_project_mutations(workspace_dir: str | Path | None = None, command_override: str = "") -> dict:
+def get_diff_modified_files(ws: Path) -> list[str]:
+    """Finds modified source files via git diff."""
+    try:
+        res = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=str(ws),
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        res_staged = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(ws),
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        files = []
+        for line in res_staged.stdout.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                files.append(parts[-1])
+        return files
+    except Exception:
+        return []
+
+def run_project_mutations(workspace_dir: str | Path | None = None, command_override: str = "", diff_only: bool = False) -> dict:
     """Executes detected or specified mutation test command and captures output."""
     ws = Path(workspace_dir or Path.cwd()).resolve()
     cmd = command_override
@@ -757,6 +785,17 @@ def run_project_mutations(workspace_dir: str | Path | None = None, command_overr
             "condensed_output": "No mutation command detected for workspace"
         }
 
+    diff_files = []
+    if diff_only:
+        diff_files = get_diff_modified_files(ws)
+        if diff_files:
+            if "mutmut" in cmd:
+                cmd = f"{cmd} --paths-to-mutate={','.join(diff_files)}"
+            elif "stryker" in cmd:
+                cmd = f"{cmd} --mutate {' '.join(diff_files)}"
+            elif "cargo mutants" in cmd:
+                cmd = f"{cmd} -f {' -f '.join(diff_files)}"
+
     t0 = time.time()
     try:
         res = subprocess.run(
@@ -771,6 +810,8 @@ def run_project_mutations(workspace_dir: str | Path | None = None, command_overr
         return {
             "status": "PASS" if res.returncode == 0 else "FAIL",
             "command": cmd,
+            "diff_scoped": diff_only,
+            "diff_files": diff_files,
             "returncode": res.returncode,
             "duration_seconds": duration,
             "stdout": res.stdout,
@@ -781,6 +822,8 @@ def run_project_mutations(workspace_dir: str | Path | None = None, command_overr
         return {
             "status": "TIMEOUT",
             "command": cmd,
+            "diff_scoped": diff_only,
+            "diff_files": diff_files,
             "returncode": -1,
             "duration_seconds": round(time.time() - t0, 3),
             "stdout": "",
@@ -791,12 +834,85 @@ def run_project_mutations(workspace_dir: str | Path | None = None, command_overr
         return {
             "status": "ERROR",
             "command": cmd,
+            "diff_scoped": diff_only,
+            "diff_files": diff_files,
             "returncode": -1,
             "duration_seconds": round(time.time() - t0, 3),
             "stdout": "",
             "stderr": str(e),
             "condensed_output": str(e)
         }
+
+def run_project_flaky_check(workspace_dir: str | Path | None = None, test_target: str = "", iterations: int = 5, command_override: str = "") -> dict:
+    """Executes target test suite N times consecutively to detect timing races and flakiness."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    cmd = command_override
+    if not cmd:
+        det = detect_project_framework(ws)
+        base_cmd = det.get("test_command", "")
+        if test_target:
+            if "pytest" in base_cmd:
+                cmd = f"{base_cmd.split()[0]} -v {test_target}"
+            elif "cargo test" in base_cmd:
+                cmd = f"cargo test {test_target}"
+            elif "go test" in base_cmd:
+                cmd = f"go test -v -run {test_target} ./..."
+            elif "vitest" in base_cmd or "jest" in base_cmd:
+                cmd = f"{base_cmd} {test_target}"
+            else:
+                cmd = f"{base_cmd} {test_target}"
+        else:
+            cmd = base_cmd
+
+    if not cmd:
+        return {
+            "status": "UNSUPPORTED",
+            "iterations": iterations,
+            "flakiness_rate": 0.0,
+            "stderr": "No test command available for flaky check"
+        }
+
+    results = []
+    failures = 0
+    failure_traces = []
+
+    for i in range(1, iterations + 1):
+        t0 = time.time()
+        try:
+            res = subprocess.run(
+                cmd,
+                shell=True,  # nosec: runner-shell
+                cwd=str(ws),
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            passed = res.returncode == 0
+            if not passed:
+                failures += 1
+                failure_traces.append(f"--- Iteration {i} Failure ---\n{condense_test_output(res.stdout, res.stderr, max_lines=15)}")
+            results.append({
+                "iteration": i,
+                "passed": passed,
+                "duration": round(time.time() - t0, 3)
+            })
+        except Exception as e:
+            failures += 1
+            failure_traces.append(f"--- Iteration {i} Error: {str(e)} ---")
+            results.append({"iteration": i, "passed": False, "error": str(e)})
+
+    flakiness_rate = round(failures / iterations, 2)
+    status = "PASS" if failures == 0 else "FAIL"
+
+    return {
+        "status": status,
+        "test_command": cmd,
+        "iterations": iterations,
+        "failures": failures,
+        "flakiness_rate": flakiness_rate,
+        "runs": results,
+        "failure_summary": "\n".join(failure_traces) if failure_traces else "All iterations passed consistently."
+    }
 
 def handle_cli_mode() -> bool:
     """Handles explicit CLI command flags. Returns True if CLI command was processed."""
@@ -853,8 +969,38 @@ def handle_cli_mode() -> bool:
         sys.exit(0 if res["status"] == "PASS" else 1)
 
     if first in ("--run-mutation", "--run-mutations", "--mutation", "--mutations"):
-        ws = args[1] if len(args) > 1 else None
-        res = run_project_mutations(ws)
+        ws = None
+        diff_only = False
+        for arg in args[1:]:
+            if arg in ("--diff", "--diff-only"):
+                diff_only = True
+            elif not arg.startswith("-") and ws is None:
+                ws = arg
+        res = run_project_mutations(ws, diff_only=diff_only)
+        print(json.dumps(res, indent=2))
+        sys.exit(0 if res["status"] == "PASS" else 1)
+
+    if first in ("--detect-flaky", "--flaky"):
+        ws = None
+        target = ""
+        iterations = 5
+        idx = 1
+        while idx < len(args):
+            arg = args[idx]
+            if arg in ("--iterations", "-n") and idx + 1 < len(args):
+                try:
+                    iterations = int(args[idx + 1])
+                except ValueError as parse_err:
+                    iterations = 5
+                idx += 2
+                continue
+            if not arg.startswith("-"):
+                if not target:
+                    target = arg
+                elif not ws:
+                    ws = arg
+            idx += 1
+        res = run_project_flaky_check(ws, test_target=target, iterations=iterations)
         print(json.dumps(res, indent=2))
         sys.exit(0 if res["status"] == "PASS" else 1)
 
@@ -939,6 +1085,7 @@ if __name__ == "__main__":
         "--detect", "-d", "--last-error", "--clear-last-error", "--check",
         "--run-tests", "--run-benchmark", "--run-benchmarks", "--benchmark",
         "--run-coverage", "--coverage", "--run-mutation", "--run-mutations", "--mutation", "--mutations",
+        "--detect-flaky", "--flaky",
         "--run-typecheck", "--typecheck", "--run-race", "--race", "--run-fuzz", "--fuzz",
         "--install-git-hooks", "--install-hook"
     )

@@ -6,9 +6,10 @@ This repository follows the **Antigravity Dev Suite** engineering standards:
 - **Architecture**: KISS and YAGNI (simplest working design, no premature abstractions).
 - **Development**: Strict Test-Driven Development (RED -> GREEN -> IMPROVE).
 - **Database Evolution**: Zero-downtime expand/contract migrations, non-blocking DDL, and reversible schema changes (Rule 14).
+- **Public API Stability**: Automated contract drift detection preventing breaking changes (Rule 13).
 - **Architecture Decision Records (ADRs)**: Document significant architectural choices under `docs/adr/`.
 - **Verification**: Terminal verification evidence required before completion.
-- **Frontend / UI**: Dual-viewport inspection (Desktop 1280x800 + Mobile 375x667).
+- **Frontend / UI & Accessibility**: Dual-viewport inspection (Desktop 1280x800 + Mobile 375x667) and WCAG 2.1 AA audit.
 
 ---
 

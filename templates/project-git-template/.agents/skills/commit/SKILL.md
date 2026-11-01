@@ -31,12 +31,14 @@ flowchart TD
    ```
 3. Abort immediately if any private key, cloud token, or unauthorized file is staged.
 
-### Phase 2: Static Critic Audit
-Run the automated AST and semantic critic across changed files:
+### Phase 2: Static Critic Audit & Public API Contract Guard
+Run the automated AST, semantic critic, and public API drift guard across changed files:
 ```bash
 python3 scripts/critic_loop.py --mode all --target .
+python3 scripts/api_contract_guard.py --target .
 ```
 Verify:
+- 0 breaking changes to exported signatures without backwards-compatible defaults.
 - 0 unhandled panics or unwraps in production code.
 - 0 command injection or dangerous eval/exec calls.
 - 0 unhandled syntax errors.

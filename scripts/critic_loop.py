@@ -33,6 +33,11 @@ except ImportError:
     get_last_syntax_error = lambda: None
     clear_last_syntax_error = lambda: False
 
+try:
+    from api_contract_guard import audit_api_contract_drift
+except ImportError:
+    audit_api_contract_drift = None
+
 SECRET_PATTERNS = [
     (re.compile(r'\b(?:sk-[a-zA-Z0-9_\-]{20,}|ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{50,}|glpat-[a-zA-Z0-9_\-]{20,}|xox[baprs]-[0-9a-zA-Z]{10,48}|sk_live_[0-9a-zA-Z]{24,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b'), "API key / token"),
     (re.compile(r'(?i)aws_secret_access_key\s*[:=]\s*[\'"]?[A-Za-z0-9/+=]{40}[\'"]?'), "AWS Secret Access Key"),
@@ -49,6 +54,8 @@ RUST_UNWRAP_EXPECT = re.compile(r'\.(unwrap|expect)\s*\(')
 SQL_KEYWORDS_PATTERN = re.compile(r'(?i)\b(SELECT\s+[\*\w\s,]+?\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b')
 SQL_UNSAFE_ADD_NOT_NULL = re.compile(r'(?i)\bALTER\s+TABLE\s+\S+\s+ADD\s+(?:COLUMN\s+)?\S+\s+[^\n;]+?\bNOT\s+NULL\b(?!\s+DEFAULT)')
 SQL_NON_CONCURRENT_INDEX = re.compile(r'(?i)\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?!CONCURRENTLY\b)')
+SQL_UNSAFE_DROP = re.compile(r'(?i)\bDROP\s+(?:TABLE|COLUMN)\b')
+SQL_UNSAFE_ALTER_TYPE = re.compile(r'(?i)\bALTER\s+(?:TABLE\s+\S+\s+)?(?:ALTER\s+COLUMN\s+\S+\s+TYPE|MODIFY\s+\S+)\b')
 
 def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all") -> dict:
     """Audits code syntax, structural integrity, OWASP security, and hygiene defect patterns."""
@@ -345,9 +352,17 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
 
                 # 5. Rust Production Unwrap/Expect Checks
                 if check_semantic and file.suffix == ".rs" and "test" not in str(file).lower():
-                    for line_idx, line in enumerate(content.splitlines(), start=1):
+                    lines = content.splitlines()
+                    in_test_block = False
+                    for line_idx, line in enumerate(lines, start=1):
                         stripped = line.strip()
+                        if "#[cfg(test)]" in stripped or "#[test]" in stripped:
+                            in_test_block = True
                         if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("#["):
+                            continue
+                        if "// safe-unwrap" in line or "/* safe-unwrap */" in line:
+                            continue
+                        if in_test_block:
                             continue
                         m = RUST_UNWRAP_EXPECT.search(line)
                         if m:
@@ -383,6 +398,22 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                 logic_report["suggested_fixes"].append(
                                     "Use CREATE INDEX CONCURRENTLY to avoid blocking table writes in production"
                                 )
+                            if SQL_UNSAFE_DROP.search(line) and "-- allow-drop" not in line:
+                                logic_report["status"] = "RETRY"
+                                logic_report["violations"].append(
+                                    f"UnsafeMigration in {file.name}: DROP TABLE/COLUMN risks immediate data loss and downtime at line {line_idx}"
+                                )
+                                logic_report["suggested_fixes"].append(
+                                    "Follow Rule 14 expand/contract pattern: deprecate column/table in release N, remove in release N+1"
+                                )
+                            if SQL_UNSAFE_ALTER_TYPE.search(line):
+                                logic_report["status"] = "RETRY"
+                                logic_report["violations"].append(
+                                    f"UnsafeMigration in {file.name}: altering column type directly causes table rewrite lock at line {line_idx}"
+                                )
+                                logic_report["suggested_fixes"].append(
+                                    "Add new column with target type additively, backfill data, and switch reads asynchronously"
+                                )
             except Exception as read_err:
                 logic_report["details"][f"{file.name}_read_notice"] = str(read_err)
 
@@ -398,6 +429,21 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                         logic_report["status"] = "RETRY"
                         logic_report["violations"].append(err)
                         logic_report["suggested_fixes"].append(f"Fix recorded syntax defect in {diag_path.name}")
+
+    # 4. Check for breaking API contract drift if in git workspace
+    check_contract = submode in ["all", "contract"]
+    if check_contract and audit_api_contract_drift and not test_mode:
+        try:
+            ws_target = target_path if 'target_path' in locals() and target_path.is_dir() else Path.cwd()
+            drift = audit_api_contract_drift(ws_target, specific_files=files_to_check if target and target != "." else None)
+            if drift.get("violations"):
+                logic_report["status"] = "RETRY"
+                logic_report["violations"].extend(drift["violations"])
+                logic_report["suggested_fixes"].extend(drift.get("suggested_fixes", []))
+            if drift.get("additions"):
+                logic_report["details"]["api_contract_additions"] = drift["additions"]
+        except Exception as drift_err:
+            logic_report["details"]["api_contract_notice"] = str(drift_err)
 
     if logic_report["status"] == "PASS" and check_syntax:
         clear_last_syntax_error()
@@ -441,6 +487,10 @@ def audit_visual_qa(target: str, test_mode: bool = False) -> dict:
                     visual_report["status"] = "RETRY"
                     visual_report["violations"].extend([f"Console error: {e}" for e in qa_data["console_errors"]])
                     visual_report["suggested_fixes"].append("Fix console error in frontend components")
+                if qa_data.get("a11y_violations"):
+                    visual_report["status"] = "RETRY"
+                    visual_report["violations"].extend([f"A11yViolation: {v}" for v in qa_data["a11y_violations"]])
+                    visual_report["suggested_fixes"].append("Fix accessibility violations to conform with WCAG 2.1 AA")
                 if qa_data.get("status") == "ERROR":
                     visual_report["status"] = "RETRY"
                     visual_report["violations"].extend(qa_data.get("warnings", []))

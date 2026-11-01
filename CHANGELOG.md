@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.13.0] — 2026-11-01
+
+### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added
+- **Public API Contract Drift Guard (`scripts/api_contract_guard.py`)**:
+  - Implemented automated public API drift detector for Python (AST & `__all__`), TypeScript/JavaScript, Go, and Rust.
+  - Automatically identifies removed exported functions/classes, altered parameter ordering, and newly added mandatory parameters without defaults against `HEAD` or git target.
+  - Integrated into `critic_loop.py` (`--mode all`, `--mode contract`) and `skills/commit/SKILL.md`.
+- **Token-Budgeted Dynamic Repository Topology Mapper (`scripts/repo_map.py`)**:
+  - Built polyglot repository symbol extractor and ASCII tree generator respecting strict LLM token budgets (`--max-tokens`).
+  - Scans Python, TypeScript/JavaScript, Go, Rust, Java, and C# files.
+  - Integrated into `skills/plan/SKILL.md`, `skills/opus-dev/SKILL.md`, and `agents/opus-architect.md` for context hygiene.
+- **Diff-Scoped Mutation Testing (`--mutation --diff`)**:
+  - Enhanced mutation runner in `scripts/auto_debug_runner.py` with git diff scoping (`--diff`).
+  - Limits mutation testing overhead to files modified in the active git working tree or branch.
+- **Non-Deterministic & Flaky Test Detection Harness (`--detect-flaky`)**:
+  - Added multi-iteration race and flaky test detector in `scripts/auto_debug_runner.py` with configurable run count (`-n <count>`).
+  - Eliminates non-deterministic race conditions and test instability before committing.
+- **Automated WCAG 2.1 AA Accessibility Verification in Visual QA**:
+  - Integrated programmatic WCAG 2.1 AA audit directly into `scripts/visual_qa.py`: root `<html lang>`, non-empty `<title>`, interactive button accessible names, image `alt` attributes, and `<label>`-associated form inputs.
+  - Wired accessibility defect assertions into `visual-qa-critic.md` and `scripts/critic_loop.py`.
+- **Hardened Static Criticism & Subagent Precision**:
+  - Updated Rust panic checker in `scripts/critic_loop.py` to exempt test blocks (`#[cfg(test)]`, `#[test]`, and `// safe-unwrap`).
+  - Expanded SQL migration checks in `critic_loop.py` to prevent table/column drops (`DROP TABLE/COLUMN`) and dangerous type mutations (`ALTER COLUMN TYPE`).
+  - Explicitly pinned subagents (`claude-critic`, `opus-architect`, `visual-qa-critic`) with `model: pro`.
+
+---
+
 ## [1.12.0] — 2026-11-01
 
 ### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added

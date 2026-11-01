@@ -77,6 +77,56 @@ def extract_route_from_source(file_path: Path) -> str:
         m = None
     return ""
 
+def audit_html_accessibility(html_content: str) -> list[str]:
+    """Evaluates HTML content for critical WCAG 2.1 AA accessibility violations."""
+    violations: list[str] = []
+
+    # 1. <html> lang attribute (WCAG 3.1.1)
+    html_match = re.search(r'<html\b([^>]*)>', html_content, re.IGNORECASE)
+    if not html_match or not re.search(r'\blang\s*=', html_match.group(1), re.IGNORECASE):
+        violations.append("MissingLangAttribute: <html> element missing 'lang' attribute (WCAG 3.1.1).")
+
+    # 2. <title> presence and content (WCAG 2.4.2)
+    title_match = re.search(r'<title\b[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
+    if not title_match or not title_match.group(1).strip():
+        violations.append("MissingPageTitle: document <title> is missing or empty (WCAG 2.4.2).")
+
+    # 3. <img> missing alt attribute (WCAG 1.1.1)
+    for img in re.finditer(r'<img\b([^>]*)>', html_content, re.IGNORECASE):
+        attrs = img.group(1)
+        if not re.search(r'\balt\s*=', attrs, re.IGNORECASE):
+            violations.append("MissingAltText: <img> element missing alt attribute (WCAG 1.1.1).")
+            break
+
+    # 4. Button accessible name (WCAG 4.1.2)
+    for btn in re.finditer(r'<button\b([^>]*)>(.*?)</button>', html_content, re.IGNORECASE | re.DOTALL):
+        attrs, inner = btn.group(1), btn.group(2).strip()
+        has_aria = bool(re.search(r'\b(aria-label|aria-labelledby|title)\s*=', attrs, re.IGNORECASE))
+        has_inner = bool(inner and not re.match(r'^\s*$', inner))
+        has_icon = bool(re.search(r'<(svg|img)\b', inner, re.IGNORECASE))
+        if not has_aria and not has_inner and not has_icon:
+            violations.append("EmptyButtonLabel: button lacks text content or aria-label (WCAG 4.1.2).")
+            break
+
+    # 5. Form inputs without label (WCAG 1.3.1)
+    for inp in re.finditer(r'<input\b([^>]*)>', html_content, re.IGNORECASE):
+        attrs = inp.group(1)
+        type_match = re.search(r'\btype\s*=\s*["\']?([^"\'\s>]+)', attrs, re.IGNORECASE)
+        inp_type = type_match.group(1).lower() if type_match else "text"
+        if inp_type in ("hidden", "submit", "button", "reset"):
+            continue
+        has_aria = bool(re.search(r'\b(aria-label|aria-labelledby|title)\s*=', attrs, re.IGNORECASE))
+        id_match = re.search(r'\bid\s*=\s*["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+        has_for_label = False
+        if id_match:
+            inp_id = id_match.group(1)
+            has_for_label = bool(re.search(rf'<label\b[^>]*\bfor\s*=\s*["\']{re.escape(inp_id)}["\']', html_content, re.IGNORECASE))
+        if not has_aria and not has_for_label:
+            violations.append("UnlabelledFormInput: input element lacks associated <label> or aria-label (WCAG 1.3.1).")
+            break
+
+    return violations
+
 def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = False, route: str = "", dev_server: str = "", port: int | None = None) -> int:
     result = {
         "target": target,
@@ -85,6 +135,8 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
         "screenshots": {},
         "console_errors": [],
         "page_errors": [],
+        "a11y_violations": [],
+        "a11y_warnings": [],
         "warnings": []
     }
     
@@ -97,7 +149,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
         if test_mode:
             temp_html = tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8")
             temp_html.write("""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -244,6 +296,56 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                     desktop_screenshot = out_path / "desktop_preview.png"
                     page.screenshot(path=str(desktop_screenshot), full_page=True)
                     result["screenshots"]["desktop"] = str(desktop_screenshot)
+
+                    # Automated WCAG 2.1 AA Accessibility Evaluation
+                    try:
+                        a11y_data = page.evaluate("""() => {
+                            const violations = [];
+                            const warnings = [];
+                            if (!document.documentElement.getAttribute('lang')) {
+                                violations.push("MissingLangAttribute: <html> element missing 'lang' attribute (WCAG 3.1.1).");
+                            }
+                            if (!document.title || document.title.trim() === '') {
+                                violations.push("MissingPageTitle: document <title> is missing or empty (WCAG 2.4.2).");
+                            }
+                            const imgs = document.querySelectorAll('img:not([alt])');
+                            if (imgs.length > 0) {
+                                violations.push(`MissingAltText: ${imgs.length} <img> element(s) missing alt attribute (WCAG 1.1.1).`);
+                            }
+                            const buttons = document.querySelectorAll('button, [role="button"]');
+                            let unnamedBtns = 0;
+                            for (const b of buttons) {
+                                const name = (b.innerText || b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
+                                if (!name && !b.querySelector('svg, img')) {
+                                    unnamedBtns++;
+                                }
+                            }
+                            if (unnamedBtns > 0) {
+                                violations.push(`EmptyButtonLabel: ${unnamedBtns} button(s) lack text content or aria-label (WCAG 4.1.2).`);
+                            }
+                            const inputs = document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea');
+                            let unlabelledInputs = 0;
+                            for (const inp of inputs) {
+                                const id = inp.getAttribute('id');
+                                const hasAria = inp.getAttribute('aria-label') || inp.getAttribute('aria-labelledby');
+                                const hasLabel = id && document.querySelector(`label[for="${id}"]`);
+                                const isNestedInLabel = inp.closest('label');
+                                if (!hasAria && !hasLabel && !isNestedInLabel) {
+                                    unlabelledInputs++;
+                                }
+                            }
+                            if (unlabelledInputs > 0) {
+                                warnings.push(`UnlabelledFormInput: ${unlabelledInputs} input element(s) lack associated <label> or aria-label (WCAG 1.3.1).`);
+                            }
+                            return { violations, warnings };
+                        }""")
+                        if a11y_data.get("violations"):
+                            result["a11y_violations"].extend(a11y_data["violations"])
+                        if a11y_data.get("warnings"):
+                            result["a11y_warnings"].extend(a11y_data["warnings"])
+                            result["warnings"].extend(a11y_data["warnings"])
+                    except Exception as a11y_err:
+                        result["warnings"].append(f"Accessibility evaluation notice: {str(a11y_err)}")
 
                     # 2. Mobile Viewport (375x667 - iPhone SE / Standard Mobile)
                     page.set_viewport_size({"width": 375, "height": 667})
