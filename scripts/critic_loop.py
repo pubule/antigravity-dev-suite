@@ -44,8 +44,11 @@ UNPROTECTED_FETCH = re.compile(r'^\s*fetch\s*\(')
 UNSAFE_EVAL_JS = re.compile(r'\b(eval|new\s+Function)\s*\(')
 UNSAFE_INNER_HTML = re.compile(r'(?:\.innerHTML\s*=\s*(?!DOMPurify\.sanitize)|dangerouslySetInnerHTML\s*=\s*\{\s*\{\s*__html:\s*(?!DOMPurify\.sanitize))')
 GO_UNHANDLED_PANIC = re.compile(r'\bpanic\s*\(')
+GO_MUTEX_LOCK = re.compile(r'\b(?P<lockvar>\w+)\.(Lock|RLock)\(\)')
 RUST_UNWRAP_EXPECT = re.compile(r'\.(unwrap|expect)\s*\(')
 SQL_KEYWORDS_PATTERN = re.compile(r'(?i)\b(SELECT\s+[\*\w\s,]+?\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b')
+SQL_UNSAFE_ADD_NOT_NULL = re.compile(r'(?i)\bALTER\s+TABLE\s+\S+\s+ADD\s+(?:COLUMN\s+)?\S+\s+[^\n;]+?\bNOT\s+NULL\b(?!\s+DEFAULT)')
+SQL_NON_CONCURRENT_INDEX = re.compile(r'(?i)\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?!CONCURRENTLY\b)')
 
 def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all") -> dict:
     """Audits code syntax, structural integrity, OWASP security, and hygiene defect patterns."""
@@ -308,9 +311,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                 "Sanitize HTML using DOMPurify.sanitize() before assigning to DOM"
                             )
 
-                # 4. Go Production Panic Checks
+                # 4. Go Production Panic & Mutex Concurrency Checks
                 if check_semantic and file.suffix == ".go" and not file.name.endswith("_test.go"):
-                    for line_idx, line in enumerate(content.splitlines(), start=1):
+                    go_lines = content.splitlines()
+                    for line_idx, line in enumerate(go_lines, start=1):
                         stripped = line.strip()
                         if stripped.startswith("//") or stripped.startswith("/*"):
                             continue
@@ -322,6 +326,22 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                             logic_report["suggested_fixes"].append(
                                 "Return an error (error value) instead of panicking in production code"
                             )
+                        # Check for unreleased Mutex Lock
+                        m_lock = GO_MUTEX_LOCK.search(line)
+                        if m_lock and "// safe-lock" not in line and "/* safe-lock */" not in line:
+                            lock_var = m_lock.group("lockvar")
+                            method = m_lock.group(2)
+                            unlock_method = "RUnlock" if method == "RLock" else "Unlock"
+                            next_lines = "\n".join(go_lines[line_idx:line_idx + 6])
+                            defer_pat = rf'defer\s+{re.escape(lock_var)}\.{unlock_method}\(\)'
+                            if not re.search(defer_pat, next_lines):
+                                logic_report["status"] = "RETRY"
+                                logic_report["violations"].append(
+                                    f"UnprotectedMutexLock in {file.name}: {lock_var}.{method}() invoked without immediate defer {lock_var}.{unlock_method}() at line {line_idx}"
+                                )
+                                logic_report["suggested_fixes"].append(
+                                    f"Add 'defer {lock_var}.{unlock_method}()' immediately after acquiring mutex lock"
+                                )
 
                 # 5. Rust Production Unwrap/Expect Checks
                 if check_semantic and file.suffix == ".rs" and "test" not in str(file).lower():
@@ -338,6 +358,31 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                             logic_report["suggested_fixes"].append(
                                 f"Handle Result/Option using ?, match, or unwrap_or instead of .{m.group(1)}()"
                             )
+
+                # 6. Database Migration Safety & Zero-Downtime SQL Checks
+                if check_semantic and file.suffix == ".sql":
+                    is_safe_migration = "-- safe-migration" in content or "/* safe-migration */" in content
+                    if not is_safe_migration:
+                        for line_idx, line in enumerate(content.splitlines(), start=1):
+                            stripped = line.strip()
+                            if stripped.startswith("--") or stripped.startswith("/*"):
+                                continue
+                            if SQL_UNSAFE_ADD_NOT_NULL.search(line):
+                                logic_report["status"] = "RETRY"
+                                logic_report["violations"].append(
+                                    f"UnsafeMigration in {file.name}: adding NOT NULL column without DEFAULT locks table at line {line_idx}"
+                                )
+                                logic_report["suggested_fixes"].append(
+                                    "Provide DEFAULT value or add column as nullable first, backfill rows, then apply NOT NULL"
+                                )
+                            if SQL_NON_CONCURRENT_INDEX.search(line):
+                                logic_report["status"] = "RETRY"
+                                logic_report["violations"].append(
+                                    f"UnsafeMigration in {file.name}: CREATE INDEX without CONCURRENTLY locks table against writes at line {line_idx}"
+                                )
+                                logic_report["suggested_fixes"].append(
+                                    "Use CREATE INDEX CONCURRENTLY to avoid blocking table writes in production"
+                                )
             except Exception as read_err:
                 logic_report["details"][f"{file.name}_read_notice"] = str(read_err)
 

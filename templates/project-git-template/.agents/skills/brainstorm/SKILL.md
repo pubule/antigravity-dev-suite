@@ -48,4 +48,14 @@ Provide a concise decision matrix with explicit **KISS/YAGNI scoring**:
   - [ ] Must NOT introduce speculative abstractions or unused generic parameters.
   - [ ] Must NOT modify existing public interface X.
   - [ ] Must maintain thread-safety on shared state Z.
-- Prompt the user to proceed directly to `/plan` or `/opus-dev`.
+
+### Step 5: Architecture Decision Record (ADR) Persistence
+When an architectural decision establishes structural patterns, libraries, or system trade-offs, persist a formal ADR in `docs/adr/NNNN-<decision-slug>.md` using the standard Nygard format:
+- **Title**: `ADR-NNNN: <Decision Title>`
+- **Status**: `PROPOSED` | `ACCEPTED` | `SUPERSEDED`
+- **Context**: State the problem context, technical constraints, and alternative approaches considered.
+- **Decision**: Declare the chosen architectural approach, KISS/YAGNI justification, and implementation strategy.
+- **Consequences**: Detail positive benefits, negative trade-offs, and operational implications.
+- **Invariants**: List non-negotiable negative constraints and formal system boundaries.
+
+Prompt the user to proceed directly to `/plan` or `/opus-dev`.

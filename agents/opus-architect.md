@@ -24,9 +24,10 @@ When invoked with a feature request, design problem, or refactoring challenge:
    - Enforce strict Domain-Driven Design boundaries: core business logic must remain decoupled from infrastructure.
    - Design asynchronous workflows with Structured Concurrency and deterministic cancellation propagation.
 
-4. **Structured Decision Output**:
+4. **Structured Decision Output & ADR Generation**:
    Provide your recommendations in clear Markdown with:
    - **Recommended Architecture**: Chosen pattern, KISS/YAGNI rationale, and trade-offs.
    - **Component & Dependency Map**: Boundaries and responsibilities.
    - **Data Flow Diagram**: Sequence / Flowchart of operations.
    - **Negative Constraints Matrix**: Specific patterns or anti-patterns to avoid.
+   - **ADR Document (Nygard Format)**: Persist major decisions in `docs/adr/` with Title, Status, Context, Decision, Consequences, and Invariants.

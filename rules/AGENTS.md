@@ -132,3 +132,11 @@ Whenever creating or modifying frontend layouts, HTML, CSS, React, Vue, or Svelt
 - **Additive Evolution**: Add new parameters only as optional with backward-compatible defaults.
 - **Schema & Payload Compatibility**: Ensure data schemas (JSON, Protobuf, DB migrations) accept legacy payloads without runtime failure.
 - **Deprecation Lifecycle**: Mark obsolete APIs with explicit deprecation warnings and migration guidance before removal in major versions.
+
+---
+
+## 14. Database Migration Safety & Zero-Downtime Schema Evolution
+- **Expand/Contract Pattern**: Implement database changes in distinct phases. Add new columns or tables additively first. Deploy application code reading and writing both formats. Backfill data asynchronously, and remove obsolete structures only in a subsequent release.
+- **Lock Avoidance & Concurrent DDL**: Always execute PostgreSQL index creation with `CREATE INDEX CONCURRENTLY` to avoid table-level write locks. Never add `NOT NULL` columns without default values to populated tables.
+- **Backward-Compatible Rollbacks**: Guarantee that migration scripts are reversible. Ensure previous application code versions can operate against newly migrated schema definitions without breaking.
+- **Safe Column Deletion**: Never drop an active column in a single deployment. Mark columns as deprecated, deploy application code removing all column references, and drop the column in a follow-up migration.

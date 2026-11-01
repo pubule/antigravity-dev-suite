@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.12.0] — 2026-11-01
+
+### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added
+- **Database Migration Safety & Zero-Downtime Gate**:
+  - Injected Rule 14 into `rules/AGENTS.md` enforcing the Expand/Contract phased migration pattern, lock avoidance, and backward-compatible rollbacks.
+  - Added SQL static analysis in `scripts/critic_loop.py` detecting unsafe table-locking DDL: `ALTER TABLE ... ADD COLUMN ... NOT NULL` without `DEFAULT`, and unindexed/non-concurrent index creation (`CREATE INDEX` without `CONCURRENTLY`). Added `-- safe-migration` override comment.
+- **Static Typecheck Runner (`--typecheck`)**:
+  - Added automated typecheck detection across 10+ ecosystems (`mypy`, `npx tsc --noEmit`, `cargo check`, `go vet`, `dotnet build`, `phpstan`, `swift build`) in `scripts/auto_debug_runner.py`.
+  - Added `run_project_typecheck()` and `--typecheck` CLI flag.
+- **Concurrency Race Detection Harness (`--race`)**:
+  - Integrated native data race detection commands (`go test -race`, `pytest -m race`, `cargo test`, `npm test -- --detectOpenHandles`) into `scripts/auto_debug_runner.py`.
+  - Added static Go concurrency check in `scripts/critic_loop.py` detecting unprotected `mu.Lock()` without immediate `defer mu.Unlock()`.
+- **Property-Based Fuzzing Runner (`--fuzz`)**:
+  - Added automated generative property and fuzz testing commands (`pytest -m property`, `go test -fuzz`, `cargo test -- --ignored property`, `npx vitest run --testNamePattern=fuzz|property`) in `scripts/auto_debug_runner.py`.
+  - Added `run_project_fuzz()` and `--fuzz` CLI flag.
+- **Context Window Token Hygiene & AST Condensation**:
+  - Implemented `condense_test_output()` in `scripts/auto_debug_runner.py` intelligently compressing verbose test outputs into actionable diagnostic summaries, tracebacks, and assertion diffs, keeping LLM context windows uncluttered.
+- **Architecture Decision Record (ADR) Persistence**:
+  - Enforced Nygard ADR schema generation in `skills/brainstorm/SKILL.md` (Step 5) and `agents/opus-architect.md` saving formal decision records to `docs/adr/`.
+- **Native Cross-Platform Pre-Commit Git Hook Installer**:
+  - Created `scripts/install_git_hooks.py` and `--install-git-hooks` CLI flag in `auto_debug_runner.py` deploying an automated pre-commit hook that verifies static critic logic, typecheck, and test suite integrity before commits.
+- **Template Parity & 100% Green Verification**:
+  - Maintained 100% byte-for-byte template parity across `templates/project-git-template/.agents/`.
+  - Extended unit and integration test suite in `tests/test_plugin_suite.py`.
+
+---
+
 ## [1.11.0] — 2026-11-01
 
 ### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added

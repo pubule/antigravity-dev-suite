@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.11.0"
+        assert data.get("version") == "1.12.0"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -2762,12 +2762,168 @@ def test_commit_skill_and_v11_plugin_manifest():
 
     # 2. Plugin manifest
     manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.11.0"
+    assert manifest["version"] == "1.12.0"
     assert any("/commit" in p for p in manifest["suggestedPrompts"])
 
     # 3. Project template GEMINI.md
     gemini_md = (PLUGIN_ROOT / "templates" / "project-git-template" / "GEMINI.md").read_text(encoding="utf-8")
     assert "/commit" in gemini_md
+
+def test_auto_debug_runner_typecheck_race_fuzz():
+    import auto_debug_runner
+    det = auto_debug_runner.detect_project_framework(PLUGIN_ROOT)
+    assert "typecheck_command" in det
+    assert "race_command" in det
+    assert "fuzz_command" in det
+    assert det["typecheck_command"] == "mypy ."
+    assert "pytest" in det["race_command"]
+    assert "pytest" in det["fuzz_command"]
+
+    # Test override execution
+    res_tc = auto_debug_runner.run_project_typecheck(command_override="echo 'Typecheck OK'")
+    assert res_tc["status"] == "PASS"
+    assert "Typecheck OK" in res_tc["stdout"]
+    assert "condensed_output" in res_tc
+
+    res_race = auto_debug_runner.run_project_race(command_override="echo 'Race OK'")
+    assert res_race["status"] == "PASS"
+    assert "Race OK" in res_race["stdout"]
+
+    res_fuzz = auto_debug_runner.run_project_fuzz(command_override="echo 'Fuzz OK'")
+    assert res_fuzz["status"] == "PASS"
+    assert "Fuzz OK" in res_fuzz["stdout"]
+
+def test_condense_test_output():
+    import auto_debug_runner
+    # Short output is not condensed
+    short_out = "Line 1\nLine 2\nLine 3"
+    assert auto_debug_runner.condense_test_output(short_out, "") == short_out
+
+    # Long output with failures is condensed
+    long_lines = [f"Passing test line {i}" for i in range(80)]
+    long_lines[30] = "FAILED test_critical_feature"
+    long_lines[31] = "AssertionError: Expected 200, got 500"
+    long_lines.append("=== 1 failed, 79 passed ===")
+    long_out = "\n".join(long_lines)
+
+    condensed = auto_debug_runner.condense_test_output(long_out, "", max_lines=30)
+    assert "Truncated" in condensed
+    assert "FAILED test_critical_feature" in condensed
+    assert "AssertionError: Expected 200, got 500" in condensed
+    assert "=== 1 failed, 79 passed ===" in condensed
+    assert len(condensed.splitlines()) <= 35
+
+def test_critic_loop_sql_migration():
+    import critic_loop
+    # 1. Unsafe ADD NOT NULL without DEFAULT
+    with tempfile.NamedTemporaryFile(suffix=".sql", mode="w", delete=False) as f:
+        f.write("ALTER TABLE users ADD COLUMN age INT NOT NULL;\n")
+        bad_sql1 = f.name
+
+    # 2. Non-concurrent CREATE INDEX
+    with tempfile.NamedTemporaryFile(suffix=".sql", mode="w", delete=False) as f:
+        f.write("CREATE INDEX idx_users_email ON users (email);\n")
+        bad_sql2 = f.name
+
+    # 3. Safe concurrent index
+    with tempfile.NamedTemporaryFile(suffix=".sql", mode="w", delete=False) as f:
+        f.write("CREATE INDEX CONCURRENTLY idx_users_email ON users (email);\n")
+        good_sql = f.name
+
+    # 4. Safe migration with override comment
+    with tempfile.NamedTemporaryFile(suffix=".sql", mode="w", delete=False) as f:
+        f.write("-- safe-migration\nALTER TABLE users ADD COLUMN age INT NOT NULL;\n")
+        override_sql = f.name
+
+    try:
+        r1 = critic_loop.audit_code_logic(bad_sql1, submode="all")
+        assert r1["status"] == "RETRY"
+        assert any("UnsafeMigration" in v and "NOT NULL" in v for v in r1["violations"])
+
+        r2 = critic_loop.audit_code_logic(bad_sql2, submode="all")
+        assert r2["status"] == "RETRY"
+        assert any("UnsafeMigration" in v and "CONCURRENTLY" in v for v in r2["violations"])
+
+        r3 = critic_loop.audit_code_logic(good_sql, submode="all")
+        assert r3["status"] == "PASS"
+
+        r4 = critic_loop.audit_code_logic(override_sql, submode="all")
+        assert r4["status"] == "PASS"
+    finally:
+        for p in (bad_sql1, bad_sql2, good_sql, override_sql):
+            if os.path.exists(p):
+                os.remove(p)
+
+def test_critic_loop_go_mutex_lock():
+    import critic_loop
+    # 1. Mutex lock without defer
+    with tempfile.NamedTemporaryFile(suffix=".go", mode="w", delete=False) as f:
+        f.write("package main\n\nfunc process() {\n    mu.Lock()\n    doWork()\n}\n")
+        bad_go = f.name
+
+    # 2. Mutex lock with defer
+    with tempfile.NamedTemporaryFile(suffix=".go", mode="w", delete=False) as f:
+        f.write("package main\n\nfunc process() {\n    mu.Lock()\n    defer mu.Unlock()\n    doWork()\n}\n")
+        good_go = f.name
+
+    # 3. Mutex lock with safe-lock comment
+    with tempfile.NamedTemporaryFile(suffix=".go", mode="w", delete=False) as f:
+        f.write("package main\n\nfunc process() {\n    mu.Lock() // safe-lock\n    doWork()\n}\n")
+        safe_go = f.name
+
+    try:
+        r1 = critic_loop.audit_code_logic(bad_go, submode="all")
+        assert r1["status"] == "RETRY"
+        assert any("UnprotectedMutexLock" in v for v in r1["violations"])
+
+        r2 = critic_loop.audit_code_logic(good_go, submode="all")
+        assert r2["status"] == "PASS"
+
+        r3 = critic_loop.audit_code_logic(safe_go, submode="all")
+        assert r3["status"] == "PASS"
+    finally:
+        for p in (bad_go, good_go, safe_go):
+            if os.path.exists(p):
+                os.remove(p)
+
+def test_git_hook_installer_and_rule_14():
+    import install_git_hooks
+    # Test installation in temporary dummy git repo
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        git_dir = temp_path / ".git"
+        git_dir.mkdir()
+
+        res = install_git_hooks.install_git_hook(temp_path)
+        assert res["status"] == "SUCCESS"
+        hook_path = Path(res["hook_path"])
+        assert hook_path.is_file()
+        content = hook_path.read_text(encoding="utf-8")
+        assert "Antigravity Enterprise Quality Gate" in content
+        assert "critic_loop.py" in content
+        assert "auto_debug_runner.py" in content
+
+        # Check idempotency
+        res_repeat = install_git_hooks.install_git_hook(temp_path)
+        assert res_repeat["status"] == "ALREADY_INSTALLED"
+
+    # Verify Rule 14 in rules/AGENTS.md and template
+    rules_text = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_text(encoding="utf-8")
+    assert "14. Database Migration Safety & Zero-Downtime Schema Evolution" in rules_text
+    assert "Expand/Contract Pattern" in rules_text
+    assert "CREATE INDEX CONCURRENTLY" in rules_text
+
+    tmpl_rules = (PLUGIN_ROOT / "templates" / "project-git-template" / ".agents" / "rules" / "AGENTS.md").read_text(encoding="utf-8")
+    assert rules_text == tmpl_rules
+
+    # Verify ADR persistence in brainstorm and opus-architect
+    brainstorm_text = (PLUGIN_ROOT / "skills" / "brainstorm" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Step 5: Architecture Decision Record (ADR) Persistence" in brainstorm_text
+    assert "docs/adr/" in brainstorm_text
+
+    architect_text = (PLUGIN_ROOT / "agents" / "opus-architect.md").read_text(encoding="utf-8")
+    assert "ADR Generation" in architect_text
+    assert "docs/adr/" in architect_text
 
 import unittest
 
@@ -3006,5 +3162,15 @@ if __name__ == "__main__":
     test_pattern_catalog_and_formal_invariants()
     print("✔ Pattern catalog and formal invariants passed")
     test_commit_skill_and_v11_plugin_manifest()
-    print("✔ Commit skill and v1.11.0 plugin manifest passed")
+    print("✔ Commit skill and v1.12.0 plugin manifest passed")
+    test_auto_debug_runner_typecheck_race_fuzz()
+    print("✔ Auto debug runner typecheck, race and fuzz passed")
+    test_condense_test_output()
+    print("✔ Output condensation and context hygiene passed")
+    test_critic_loop_sql_migration()
+    print("✔ Critic loop SQL zero-downtime migration checks passed")
+    test_critic_loop_go_mutex_lock()
+    print("✔ Critic loop Go concurrency mutex checks passed")
+    test_git_hook_installer_and_rule_14()
+    print("✔ Git hook installer, Rule 14 and ADR persistence passed")
     print("\n🎉 ALL TESTS PASSED (100% GREEN)")
