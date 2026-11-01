@@ -28,6 +28,10 @@ List the exact files to create or modify:
 - Explicitly declare public contracts, database models, or external interfaces that **must remain unbroken**.
 - Define algorithmic bounds ($O(1)$, $O(n)$, $O(n \log n)$). Identify and eliminate quadratic or ReDoS risks.
 - Define domain Typestate transitions and Branded Type definitions.
+- **Formal Invariant Matrix**:
+  Tabulate pre-conditions, post-conditions, invariants, and edge cases to scaffold Flash reasoning:
+  | Component / Function | Pre-Conditions | Post-Conditions | Invariants Maintained | Boundary & Error Scenarios |
+  | :--- | :--- | :--- | :--- | :--- |
 - **Formal Inductive Invariant Specification**:
   When specifying iterative algorithms or state machines, define:
   1. **Precondition ($P$)**: Initial state predicate required before entry.
@@ -36,6 +40,13 @@ List the exact files to create or modify:
   4. **Postcondition ($Q$)**: Guaranteed final state verified upon termination ($I \land \neg B \implies Q$).
 
 ### 3. Atomic Task Breakdown (Red-Green Sequence)
+- **Topological Subtask Ordering**:
+  Order multi-file implementation sequentially across dependency tiers to prevent broken imports:
+  1. **Tier 1 (Contracts & Types)**: Exported interfaces, types, schemas, branded primitives.
+  2. **Tier 2 (Test Targets RED)**: Unit and property-based test suites establishing baseline failures.
+  3. **Tier 3 (Core Domain Logic GREEN)**: Minimal implementations satisfying unit tests.
+  4. **Tier 4 (Integration & Wiring)**: Routing, adapters, CLI entry points, and end-to-end verification.
+
 Format each subtask as an atomic, verifiable unit:
 
 #### Task 1: [Domain Model, Typestate & Property Tests]

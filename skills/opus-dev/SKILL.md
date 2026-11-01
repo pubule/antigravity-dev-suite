@@ -28,6 +28,7 @@ flowchart TD
 ### Phase 1: Rapid Design & Algorithmic Bounds Gate (Inspired by `/brainstorm`)
 - **Repository Context Map**: Generate high-density symbol map using `python3 scripts/repo_map.py . --max-tokens 2048` to establish context topology.
 - **Semantic Symbol Slicing**: Use `python3 scripts/semantic_slice.py <file> --symbol <name>` to extract targeted functions and classes without loading full files.
+- **Formal Invariant Matrix**: Tabulate pre-conditions, post-conditions, and invariants before code writing.
 - **Zero Filler (ASD-STE100)**: Start immediately with structured technical analysis.
 - **KISS & YAGNI Check**: Choose the simplest design with the minimum number of moving parts. Avoid speculative abstractions.
 - **Algorithmic Bounds**: Bound time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns.
@@ -35,6 +36,7 @@ flowchart TD
 - **ADR Persistence**: For significant architectural choices, record an Architecture Decision Record under `docs/adr/`.
 
 ### Phase 2: Atomic Plan & Test Targets (Inspired by `/plan`)
+- **Topological Subtask Ordering**: Sequence subtasks across tiers (Contracts/Types $\to$ Tests RED $\to$ Domain GREEN $\to$ Integration).
 - Break the task into atomic, verifiable subtasks (1-2 files per step).
 - For each subtask, specify:
   - Exact file paths to create or edit.

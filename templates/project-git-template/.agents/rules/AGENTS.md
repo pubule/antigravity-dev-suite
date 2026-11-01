@@ -140,3 +140,18 @@ Whenever creating or modifying frontend layouts, HTML, CSS, React, Vue, or Svelt
 - **Lock Avoidance & Concurrent DDL**: Always execute PostgreSQL index creation with `CREATE INDEX CONCURRENTLY` to avoid table-level write locks. Never add `NOT NULL` columns without default values to populated tables.
 - **Backward-Compatible Rollbacks**: Guarantee that migration scripts are reversible. Ensure previous application code versions can operate against newly migrated schema definitions without breaking.
 - **Safe Column Deletion**: Never drop an active column in a single deployment. Mark columns as deprecated, deploy application code removing all column references, and drop the column in a follow-up migration.
+
+---
+
+## 15. Subagent Model Inheritance & Latency Optimization
+- **Model Inheritance Mandate**: Configure all subagents with `model: inherit`. Subagents must inherit the parent model configuration.
+- **Pro Model Prohibition**: Never configure subagents with `model: pro`. Explicit `pro` configurations create heavy latency bottlenecks.
+- **Velocity Preservation**: Use lightweight model inheritance to prevent execution pauses and maintain interactive turn velocity.
+
+---
+
+## 16. Spec-First Invariant Matrix & Topological Execution
+- **Pre-Implementation Matrix**: Construct a formal invariant matrix before modifying logic.
+- **Contract Specification**: Define pre-conditions, post-conditions, invariants maintained, and boundary error behaviors for every component.
+- **Topological Ordering**: Sequence development tasks by dependency tiers. Complete contract interfaces before tests, tests before domain logic, and domain logic before integration.
+

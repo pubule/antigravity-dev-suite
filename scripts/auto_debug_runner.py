@@ -1041,6 +1041,39 @@ def handle_cli_mode() -> bool:
         print(json.dumps(res, indent=2))
         sys.exit(0 if res.get("status") in ("SUCCESS", "ALREADY_INSTALLED") else 1)
 
+    if first in ("--filter-stream", "--condense"):
+        max_lines = 30
+        idx = 1
+        cmd_to_run = []
+        while idx < len(args):
+            if args[idx] in ("--max-lines", "-m") and idx + 1 < len(args):
+                try:
+                    max_lines = int(args[idx + 1])
+                except ValueError:
+                    max_lines = 30
+                idx += 2
+                continue
+            if args[idx] == "--":
+                cmd_to_run = args[idx + 1:]
+                break
+            idx += 1
+
+        if cmd_to_run:
+            proc = subprocess.run(cmd_to_run, capture_output=True, text=True)
+            condensed = condense_test_output(proc.stdout, proc.stderr, max_lines=max_lines)
+            print(condensed)
+            sys.exit(proc.returncode)
+        else:
+            raw_input = ""
+            try:
+                if not sys.stdin.isatty():
+                    raw_input = sys.stdin.read()
+            except (OSError, UnicodeDecodeError):
+                raw_input = ""
+            condensed = condense_test_output(raw_input, "", max_lines=max_lines)
+            print(condensed)
+            sys.exit(0)
+
     return False
 
 def main():
@@ -1107,7 +1140,8 @@ if __name__ == "__main__":
         "--run-coverage", "--coverage", "--run-mutation", "--run-mutations", "--mutation", "--mutations",
         "--detect-flaky", "--flaky",
         "--run-typecheck", "--typecheck", "--run-race", "--race", "--run-fuzz", "--fuzz",
-        "--install-git-hooks", "--install-hook"
+        "--install-git-hooks", "--install-hook",
+        "--filter-stream", "--condense"
     )
     try:
         main()

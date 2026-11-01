@@ -1,7 +1,7 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.14.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.15.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
-Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
+Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
 
 ---
 
@@ -51,11 +51,24 @@ flowchart TD
 
 ## 🤖 Specialized Subagent Personas
 
-| Subagent | Persona File | Role & Expertise |
-| :--- | :--- | :--- |
-| **`opus-architect`** | `agents/opus-architect.md` | System design, design pattern selection, complexity analysis ($O(n)$), KISS/YAGNI anti-overengineering gate, and API stability. |
-| **`claude-critic`** | `agents/claude-critic.md` | Strict 7-pillar adversarial inspector for negative constraints, KISS/YAGNI compliance, concurrency, edge cases, and OWASP Top 10 vulnerabilities. |
-| **`visual-qa-critic`**| `agents/visual-qa-critic.md`| Multimodal UI/UX and accessibility critic inspecting mobile horizontal overflow, tap targets (≥44px), and console errors. |
+All subagents configure `model: inherit` to preserve parent execution speed and eliminate model initialization delays:
+
+| Subagent | Persona File | Model | Role & Expertise |
+| :--- | :--- | :--- | :--- |
+| **`opus-architect`** | `agents/opus-architect.md` | `inherit` | System design, design pattern selection, complexity analysis ($O(n)$), KISS/YAGNI anti-overengineering gate, and API stability. |
+| **`claude-critic`** | `agents/claude-critic.md` | `inherit` | Strict 7-pillar adversarial inspector for negative constraints, KISS/YAGNI compliance, concurrency, edge cases, and OWASP Top 10 vulnerabilities. |
+| **`visual-qa-critic`**| `agents/visual-qa-critic.md`| `inherit` | Multimodal UI/UX and accessibility critic inspecting mobile horizontal overflow, tap targets (≥44px), and console errors. |
+
+---
+
+## ⚡ Gemini Flash 3.8 Acceleration & Caching Architecture
+
+The suite implements local deterministic caching and token hygiene to maximize Gemini Flash 3.8 performance without latency bottlenecks:
+- **Persistent `mtime` Disk Cache (`scripts/repo_map.py`)**: Stores file symbol maps at `.gemini/cache/repo_map_cache.json`. Incremental scanning skips unchanged files and provides sub-5ms symbol resolution.
+- **AST Semantic Slicing (`scripts/semantic_slice.py`)**: Extracts only targeted functions or classes, avoiding multi-hundred-line file reads and context dilution.
+- **Stream Output Condensation (`scripts/auto_debug_runner.py`)**: Filters noisy framework frames and caps failure assertion diffs to $\le 30$ lines.
+- **Spec-First Formal Invariant Matrices**: Mandates pre-conditions, post-conditions, and invariant contracts prior to writing code, enabling first-pass correctness.
+- **Zero-Pro Subagent Inheritance**: Enforces `model: inherit` on all subagents to eliminate heavy model switching delays.
 
 ---
 
@@ -79,19 +92,19 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.14.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.15.0)
 ├── hooks.json                  # Root PreToolUse & PostToolUse hook configuration
 ├── mcp_config.json             # Root Playwright MCP server definition
-├── agents/                     # Subagent personas (Native Markdown)
+├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
 │   ├── claude-critic.md        # Adversarial logic, migration & constraints critic (Opus 5.5 Standard)
 │   └── visual-qa-critic.md     # Multimodal visual QA critic (Dual-Viewport)
 ├── rules/                      # System rules injected into context
-│   └── AGENTS.md               # Master Claude Opus 5.5 Enterprise Rulebook (14 Architectural Rules)
+│   └── AGENTS.md               # Master Claude Opus 5.5 Enterprise Rulebook (16 Architectural Rules)
 ├── skills/                     # Skill modules & First-Class Slash Commands
 │   ├── opus-dev/SKILL.md       # /opus-dev: Unified autonomous engineering meta-engine
 │   ├── brainstorm/SKILL.md     # /brainstorm: Architectural trade-off analysis & ADR persistence
-│   ├── plan/SKILL.md           # /plan: Atomic milestone & TDD planning
+│   ├── plan/SKILL.md           # /plan: Atomic milestone & TDD planning with Formal Invariant Matrix
 │   ├── auto-debug/SKILL.md     # /auto-debug: Multi-ecosystem closed-loop auto-debugger (Tests, Types, Race, Fuzz)
 │   ├── code-review/            # /code-review: 5-Pass adversarial security, invariants & typing gate
 │   │   ├── SKILL.md            # Multi-pass code review workflow
@@ -110,10 +123,10 @@ antigravity-dev-suite/
 │           └── supply-chain.md # Dependency auditing, lockfile integrity, typosquatting
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
 │   ├── validator_core.py       # Core AST, regex, JSONC, polyglot raw strings, and delimiter parser
-│   ├── auto_debug_runner.py    # Universal PostToolUse hook processor, tests, typecheck, race, fuzz & flaky runner
+│   ├── auto_debug_runner.py    # PostToolUse processor, tests, typecheck, race, fuzz, flaky runner & stream filter
 │   ├── semantic_slice.py       # AST & brace symbol slicer for Flash 3.8 context hygiene
 │   ├── api_contract_guard.py   # Automated public API contract drift detector (Python, TS, Go, Rust)
-│   ├── repo_map.py             # Token-budgeted repository symbol and topology mapper
+│   ├── repo_map.py             # Token-budgeted repository symbol mapper with persistent mtime cache
 │   ├── auto_debug_runner.sh    # Resilient Unix wrapper for auto-debug hook execution
 │   ├── install_git_hooks.py    # Native cross-platform pre-commit Git hook installer
 │   ├── pre_tool_guard.py       # PreToolUse safety guardrail (Blocks catastrophic commands & leaks)
@@ -124,7 +137,7 @@ antigravity-dev-suite/
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
 ├── tests/                      # Automated Verification & TDD Suite
-│   └── test_plugin_suite.py    # Full unit and integration test suite (240 automated checks)
+│   └── test_plugin_suite.py    # Full unit and integration test suite (375 automated checks)
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux

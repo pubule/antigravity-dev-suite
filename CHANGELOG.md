@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.15.0] — 2026-11-01
+
+### 🚀 Highlights & Flash 3.8 Latency & Cognitive Acceleration
+- **Strict Prohibition of `pro` Models & Subagent Inheritance (`model: inherit`)**:
+  - Eliminated `model: pro` across all subagents (`claude-critic.md`, `opus-architect.md`, `visual-qa-critic.md`) and project templates.
+  - Pinned subagents strictly to `model: inherit` to prevent multi-second initialization latency and obey zero-pro operational constraints.
+  - Added Rule 15 to `rules/AGENTS.md` and automated regression guard in `tests/test_plugin_suite.py`.
+- **Persistent `mtime`-Based Disk Cache in `scripts/repo_map.py`**:
+  - Added atomic persistent symbol cache stored at `.gemini/cache/repo_map_cache.json` (with automatic fallback to temporary storage).
+  - Skips re-scanning unmodified files based on file modification timestamps (`mtime`), reducing symbol map generation time to sub-5ms.
+  - Added `--no-cache` CLI flag for forced cache invalidation and atomic temporary file writes.
+- **Spec-First Formal Invariant Matrix & Topological Subtask Ordering**:
+  - Added Rule 16 to `rules/AGENTS.md`, `skills/plan/SKILL.md`, and `skills/opus-dev/SKILL.md`.
+  - Requires pre-implementation invariant matrices (Pre-Conditions, Post-Conditions, Invariants Maintained, Boundary & Error Scenarios).
+  - Enforces dependency tier ordering: Tier 1 Contracts $\to$ Tier 2 Tests (RED) $\to$ Tier 3 Domain (GREEN) $\to$ Tier 4 Integration.
+- **Token Hygiene Stream Filter in `scripts/auto_debug_runner.py`**:
+  - Added `--filter-stream` / `--condense` CLI mode supporting standard input streaming and command execution.
+  - Automatically condenses voluminous test failures to $\le 30$ lines and eliminates noisy framework stack traces to maximize LLM signal density.
+
+---
+
 ## [1.14.0] — 2026-11-01
 
 ### 🚀 Highlights & Flash 3.8 Optimization for Claude Opus 5.5 Level

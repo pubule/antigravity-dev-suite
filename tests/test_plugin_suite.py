@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.14.0"
+        assert data.get("version") == "1.15.0"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -456,6 +456,8 @@ def test_subagent_definitions():
         assert content.startswith("---"), f"Missing YAML frontmatter in {agent_file.name}"
         assert "name:" in content, f"Missing name in {agent_file.name}"
         assert "description:" in content, f"Missing description in {agent_file.name}"
+        assert "model: pro" not in content, f"Subagent {agent_file.name} must not use pro model"
+        assert "model: inherit" in content, f"Subagent {agent_file.name} must specify model: inherit"
 
 def test_toml_validation():
     # 1. Valid TOML
@@ -2735,6 +2737,8 @@ def test_pattern_catalog_and_formal_invariants():
     # 2. Formal loop invariant schema in plan & brainstorm skills
     plan_skill = (PLUGIN_ROOT / "skills" / "plan" / "SKILL.md").read_text(encoding="utf-8")
     assert "Formal Inductive Invariant Specification" in plan_skill
+    assert "Formal Invariant Matrix" in plan_skill
+    assert "Topological Subtask Ordering" in plan_skill
     assert "Precondition" in plan_skill
     assert "Loop Invariant" in plan_skill
     assert "Loop Variant" in plan_skill
@@ -2762,7 +2766,7 @@ def test_commit_skill_and_v11_plugin_manifest():
 
     # 2. Plugin manifest
     manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.14.0"
+    assert manifest["version"] == "1.15.0"
     assert any("/commit" in p for p in manifest["suggestedPrompts"])
 
     # 3. Project template GEMINI.md
@@ -2907,11 +2911,17 @@ def test_git_hook_installer_and_rule_14():
         res_repeat = install_git_hooks.install_git_hook(temp_path)
         assert res_repeat["status"] == "ALREADY_INSTALLED"
 
-    # Verify Rule 14 in rules/AGENTS.md and template
+    # Verify Rule 14, 15, 16 in rules/AGENTS.md and template
     rules_text = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_text(encoding="utf-8")
     assert "14. Database Migration Safety & Zero-Downtime Schema Evolution" in rules_text
     assert "Expand/Contract Pattern" in rules_text
     assert "CREATE INDEX CONCURRENTLY" in rules_text
+    assert "15. Subagent Model Inheritance & Latency Optimization" in rules_text
+    assert "Model Inheritance Mandate" in rules_text
+    assert "Pro Model Prohibition" in rules_text
+    assert "16. Spec-First Invariant Matrix & Topological Execution" in rules_text
+    assert "Pre-Implementation Matrix" in rules_text
+    assert "Topological Ordering" in rules_text
 
     tmpl_rules = (PLUGIN_ROOT / "templates" / "project-git-template" / ".agents" / "rules" / "AGENTS.md").read_text(encoding="utf-8")
     assert rules_text == tmpl_rules
@@ -2980,6 +2990,45 @@ def test_repo_map_polyglot_and_token_budget():
         assert repo_data["file_count"] >= 1
         assert "UserService" in repo_data["formatted_map"]
 
+        # Verify persistent caching
+        cache_path = repo_map.get_cache_file_path(tmp_path)
+        assert cache_path.is_file(), "repo_map should have created a persistent cache file"
+        cached_data = repo_map.load_repo_map_cache(cache_path)
+        assert "src/service.py" in cached_data.get("files", {})
+
+        # Second run should use cache
+        repo_data_cached = repo_map.generate_repo_map(tmp_path, max_tokens=200, use_cache=True)
+        assert repo_data_cached["file_count"] == 1
+
+
+def test_repo_map_cache_invalidation_and_hit():
+    import repo_map
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        f1 = tmp_path / "a.py"
+        f2 = tmp_path / "b.py"
+        f1.write_text("def func_a(): pass\n", encoding="utf-8")
+        f2.write_text("def func_b(): pass\n", encoding="utf-8")
+
+        # Initial scan creates cache
+        map1 = repo_map.scan_repository(tmp_path, use_cache=True)
+        assert "a.py" in map1 and "b.py" in map1
+        assert map1["a.py"][0]["name"] == "func_a"
+
+        # Modify f2
+        import time
+        time.sleep(0.01)
+        f2.write_text("def func_b_modified(): pass\n", encoding="utf-8")
+
+        # Cached scan should update f2 while keeping f1 intact
+        map2 = repo_map.scan_repository(tmp_path, use_cache=True)
+        assert map2["a.py"][0]["name"] == "func_a"
+        assert map2["b.py"][0]["name"] == "func_b_modified"
+
+        # Bypass cache test
+        map3 = repo_map.scan_repository(tmp_path, use_cache=False)
+        assert map3["b.py"][0]["name"] == "func_b_modified"
+
 def test_auto_debug_runner_flaky_and_mutation_diff():
     import auto_debug_runner
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -3007,6 +3056,26 @@ def test_auto_debug_runner_flaky_and_mutation_diff():
         # Framework detection verifies mutation runner
         det = auto_debug_runner.detect_project_framework(PLUGIN_ROOT)
         assert "mutation_command" in det
+
+
+def test_auto_debug_runner_filter_stream():
+    raw_noisy = (
+        "=== test session starts ===\n"
+        "platform linux -- Python 3.11\n"
+        "rootdir: /app\n"
+        + "".join(f"/usr/local/lib/python3.11/site-packages/frame_{i}.py: in call\n" for i in range(50))
+        + "E AssertionError: Expected 42 but got 0\n"
+        "=== 1 failed in 0.05s ===\n"
+    )
+    code, stdout, stderr = run_script("auto_debug_runner.py", ["--filter-stream"], input_data=raw_noisy)
+    assert code == 0
+    assert "AssertionError: Expected 42 but got 0" in stdout
+    assert "frame_25.py" not in stdout
+
+    # 2. Command execution mode
+    code_cmd, stdout_cmd, _ = run_script("auto_debug_runner.py", ["--filter-stream", "--", sys.executable, "-c", "print('hello from filtered command')"])
+    assert code_cmd == 0
+    assert "hello from filtered command" in stdout_cmd
 
 def test_critic_loop_rust_safe_unwraps_and_sql_drops():
     import critic_loop

@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
+import logging
 import os
 import re
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -113,10 +117,55 @@ def extract_text_symbols(content: str, lang: str) -> List[Dict[str, Any]]:
     return symbols
 
 
-def scan_repository(workspace_dir: Path, max_files: int = 200) -> Dict[str, List[Dict[str, Any]]]:
-    """Scans workspace directory and extracts symbols grouped by relative path."""
+def get_cache_file_path(workspace_dir: Path) -> Path:
+    """Determines the persistent symbol cache file location for a workspace."""
+    ws = workspace_dir.resolve()
+    gemini_cache = ws / ".gemini" / "cache"
+    try:
+        if gemini_cache.is_dir() or (ws.is_dir() and os.access(ws, os.W_OK)):
+            gemini_cache.mkdir(parents=True, exist_ok=True)
+            return gemini_cache / "repo_map_cache.json"
+    except OSError as err:
+        logging.getLogger(__name__).debug("Falling back to tempdir cache: %s", err)
+    ws_hash = hashlib.sha256(str(ws).encode("utf-8")).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"agy_repo_map_{ws_hash}.json"
+
+
+def load_repo_map_cache(cache_path: Path) -> Dict[str, Any]:
+    """Loads cached file symbol index safely."""
+    if cache_path.is_file():
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def save_repo_map_cache(cache_path: Path, data: Dict[str, Any]) -> None:
+    """Persists symbol index atomically to disk."""
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = cache_path.with_suffix(".tmp")
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        temp_file.replace(cache_path)
+    except OSError as err:
+        logging.getLogger(__name__).debug("Unable to save repo map cache: %s", err)
+
+
+def scan_repository(
+    workspace_dir: Path,
+    max_files: int = 200,
+    use_cache: bool = True
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Scans workspace directory and extracts symbols grouped by relative path with mtime caching."""
     repo_map: Dict[str, List[Dict[str, Any]]] = {}
     ws = workspace_dir.resolve()
+    cache_path = get_cache_file_path(ws) if use_cache else None
+    cache = load_repo_map_cache(cache_path) if cache_path else {}
+    cached_files = cache.get("files", {})
+    new_cached_files: Dict[str, Any] = {}
     scanned_count = 0
 
     for root, dirs, files in os.walk(ws):
@@ -132,24 +181,41 @@ def scan_repository(workspace_dir: Path, max_files: int = 200) -> Dict[str, List
             except ValueError:
                 continue
 
-            # Read source content
             try:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
+                current_mtime = file_path.stat().st_mtime
             except OSError:
                 continue
 
-            lang = EXT_TO_LANG[ext]
-            if lang == "python":
-                syms = extract_python_symbols(content)
+            # Check cache with mtime delta threshold
+            cached_entry = cached_files.get(rel_path)
+            if cached_entry and abs(cached_entry.get("mtime", 0) - current_mtime) < 1e-4:
+                syms = cached_entry.get("symbols", [])
             else:
-                syms = extract_text_symbols(content, lang)
+                # Read source content and parse
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                except OSError:
+                    continue
+
+                lang = EXT_TO_LANG[ext]
+                if lang == "python":
+                    syms = extract_python_symbols(content)
+                else:
+                    syms = extract_text_symbols(content, lang)
+
+            new_cached_files[rel_path] = {"mtime": current_mtime, "symbols": syms}
 
             if syms:
                 repo_map[rel_path] = syms
                 scanned_count += 1
                 if scanned_count >= max_files:
+                    if cache_path:
+                        save_repo_map_cache(cache_path, {"files": new_cached_files})
                     return repo_map
+
+    if cache_path:
+        save_repo_map_cache(cache_path, {"files": new_cached_files})
 
     return repo_map
 
@@ -192,12 +258,13 @@ def format_repo_map(repo_map: Dict[str, List[Dict[str, Any]]], max_lines: int = 
 def generate_repo_map(
     target_dir: Path,
     max_tokens: int = 2048,
-    max_files: int = 150
+    max_files: int = 150,
+    use_cache: bool = True
 ) -> Dict[str, Any]:
-    """Generates structured repository map and token-budgeted representation."""
+    """Generates structured repository map and token-budgeted representation with optional disk cache."""
     # Approximate ~4 characters per token
     budgeted_lines = max(30, (max_tokens * 4) // 60)
-    raw_map = scan_repository(target_dir, max_files=max_files)
+    raw_map = scan_repository(target_dir, max_files=max_files, use_cache=use_cache)
     formatted = format_repo_map(raw_map, max_lines=budgeted_lines)
 
     return {
@@ -215,6 +282,7 @@ def main():
     parser.add_argument("target", nargs="?", default=".", help="Root directory of workspace to map")
     parser.add_argument("--max-tokens", type=int, default=2048, help="Token budget for map output (default: 2048)")
     parser.add_argument("--max-files", type=int, default=150, help="Maximum files to scan")
+    parser.add_argument("--no-cache", action="store_true", help="Bypass and invalidate persistent disk cache")
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON format")
 
     args = parser.parse_args()
@@ -224,7 +292,12 @@ def main():
         sys.stderr.write(f"Error: Target directory does not exist: {target_dir}\n")
         sys.exit(1)
 
-    result = generate_repo_map(target_dir, max_tokens=args.max_tokens, max_files=args.max_files)
+    result = generate_repo_map(
+        target_dir,
+        max_tokens=args.max_tokens,
+        max_files=args.max_files,
+        use_cache=not args.no_cache
+    )
 
     if args.json:
         print(json.dumps(result, indent=2))
