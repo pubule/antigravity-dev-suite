@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.10.0] — 2026-11-01
+
+### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added
+- **Formal Algorithmic Bounds & Asymptotic Proofs**: Injected Section 9 into `rules/AGENTS.md` and `agents/opus-architect.md` requiring explicit time/space complexity proofs ($O(1)$, $O(n)$, $O(n \log n)$) and forbidding undetected $O(n^2)$ quadratic traps or unindexed queries.
+- **Typestate Patterns & Branded Nominal Types**: Added Section 10 to `rules/AGENTS.md` enforcing compile-time state transitions (`Draft -> Submitted -> Approved`) and branded primitive types (`UserId`, `AccountId`) to make invalid domain states unrepresentable.
+- **Structured Concurrency, Cancellation Tokens & Resource Bounds**: Added Section 11 to `rules/AGENTS.md` enforcing strict parent-child lifetime bounding, cancellation token propagation, and bounded backpressure across async engines.
+- **Property-Based Testing, Mutation Hardening & Domain Isolation**: Added Section 12 to `rules/AGENTS.md` requiring randomized generative property tests (`Hypothesis`, `fast-check`), mutation testing validation, and Clean Architecture strict domain isolation.
+- **Semantic AST Critic Loop Enhancements**:
+  - Python AST analysis in `scripts/critic_loop.py` detecting mutable default arguments (`def fn(x=[])`, `def fn(x={})`).
+  - Static regular expression ReDoS analyzer detecting nested catastrophic backtracking quantifiers.
+  - Floating/unawaited promise detection for JavaScript/TypeScript `fetch()` invocations.
+  - Added `--mode semantic` and `--mode complexity` CLI flags.
+- **Microbenchmarking & Latency Profiling Skill (`/benchmark`)**:
+  - Integrated `skills/benchmark/SKILL.md` with 4-phase microbenchmark pipeline: Ecosystem Detection, Hotspot Audit ($O(n^2)$, N+1 queries, memory growth), Regression Gate (>5%), and `BENCHMARK-REPORT.md` schema.
+  - Extended `scripts/auto_debug_runner.py` with multi-ecosystem benchmark runner detection (`pytest -v --benchmark-only`, `cargo bench`, `go test -bench=.`, etc.) and `--benchmark` CLI flag.
+- **Supply Chain Vulnerability Defense**: Added `skills/security-audit/references/supply-chain.md` covering transitive dependency audits (`pip-audit`, `npm audit`, `cargo audit`, `govulncheck`), lockfile integrity, dependency confusion, install script execution hooks, and typosquatting prevention.
+- **5-Pass Adversarial Code Review**: Upgraded `skills/code-review` to inspect Typestate, Invariants, Concurrency Cancellation, and Latency/Memory Performance gates.
+- **Template Parity & 100% Green Verification**: Synchronized all skills, rules, agents, and references to `templates/project-git-template/`. Extended test suite to 105 automated unit and integration tests passing with 100% green status.
+
+---
+
 ## [1.9.0] — 2026-10-31
 
 ### 🚀 Highlights & Features Added

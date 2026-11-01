@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.9.0"
+        assert data.get("version") == "1.10.0"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -2478,7 +2478,7 @@ def test_security_audit_skill_and_references():
 
     ref_dir = skill_dir / "references"
     assert ref_dir.is_dir()
-    expected_refs = ["web-and-auth.md", "ai-and-llm.md", "memory-and-injection.md"]
+    expected_refs = ["web-and-auth.md", "ai-and-llm.md", "memory-and-injection.md", "supply-chain.md"]
     for ref_name in expected_refs:
         ref_file = ref_dir / ref_name
         assert ref_file.exists(), f"Missing reference file: {ref_name}"
@@ -2489,6 +2489,85 @@ def test_security_audit_skill_and_references():
     assert (tpl_dir / "SKILL.md").exists()
     for ref_name in expected_refs:
         assert (tpl_dir / "references" / ref_name).exists()
+
+def test_critic_loop_semantic_mutable_defaults():
+    import critic_loop
+
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write("def compute(items=[]):\n    items.append(1)\n    return items\n")
+        bad_py = f.name
+
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write("def compute(items=None):\n    if items is None:\n        items = []\n    return items\n")
+        good_py = f.name
+
+    try:
+        # 1. Python AST detects mutable default argument
+        res_bad = critic_loop.audit_code_logic(bad_py, submode="semantic")
+        assert res_bad["status"] == "RETRY"
+        assert any("MutableDefaultArgument" in v for v in res_bad["violations"])
+
+        # 2. Clean file passes semantic audit
+        res_good = critic_loop.audit_code_logic(good_py, submode="semantic")
+        assert res_good["status"] == "PASS"
+
+        # 3. CLI execution
+        code, stdout, _ = run_script("critic_loop.py", ["--mode", "semantic", "--target", bad_py])
+        assert code == 1
+        data = json.loads(stdout)
+        assert data["status"] == "RETRY"
+    finally:
+        if os.path.exists(bad_py):
+            os.remove(bad_py)
+        if os.path.exists(good_py):
+            os.remove(good_py)
+
+def test_critic_loop_semantic_redos_and_unawaited():
+    import critic_loop
+
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write('import re\nPATTERN = re.compile(r"(a+)+")\n')
+        redos_py = f.name
+
+    with tempfile.NamedTemporaryFile(suffix=".ts", mode="w", delete=False) as f:
+        f.write('export function syncCall() {\n  fetch("https://api.example.com");\n  return 42;\n}\n')
+        unawaited_ts = f.name
+
+    try:
+        # 1. ReDoS nested quantifier detection
+        res_redos = critic_loop.audit_code_logic(redos_py, submode="semantic")
+        assert res_redos["status"] == "RETRY"
+        assert any("ReDoSRisk" in v for v in res_redos["violations"])
+
+        # 2. Floating/unawaited fetch promise detection
+        res_ts = critic_loop.audit_code_logic(unawaited_ts, submode="semantic")
+        assert res_ts["status"] == "RETRY"
+        assert any("UnawaitedPromise" in v for v in res_ts["violations"])
+    finally:
+        if os.path.exists(redos_py):
+            os.remove(redos_py)
+        if os.path.exists(unawaited_ts):
+            os.remove(unawaited_ts)
+
+def test_benchmark_skill_and_cli():
+    # 1. Benchmark skill specification
+    skill_file = PLUGIN_ROOT / "skills" / "benchmark" / "SKILL.md"
+    assert skill_file.exists(), f"Missing {skill_file}"
+    text = skill_file.read_text(encoding="utf-8")
+    assert "name: benchmark" in text
+    assert "BENCHMARK-REPORT.md" in text
+    assert "pytest -v --benchmark-only" in text
+
+    # 2. Template parity
+    tpl_skill = PLUGIN_ROOT / "templates" / "project-git-template" / ".agents" / "skills" / "benchmark" / "SKILL.md"
+    assert tpl_skill.exists(), f"Missing template parity {tpl_skill}"
+    assert tpl_skill.read_text(encoding="utf-8") == text
+
+    # 3. CLI runner test
+    code, stdout, _ = run_script("auto_debug_runner.py", ["--benchmark", str(PLUGIN_ROOT)])
+    data = json.loads(stdout)
+    assert "status" in data
+    assert "benchmark_command" in data or "command" in data
 
 import unittest
 
@@ -2712,4 +2791,10 @@ if __name__ == "__main__":
     print("✔ Critic loop fine-grained modes and target flag passed")
     test_security_audit_skill_and_references()
     print("✔ Security audit skill and modular references passed")
+    test_critic_loop_semantic_mutable_defaults()
+    print("✔ Critic loop semantic mutable defaults passed")
+    test_critic_loop_semantic_redos_and_unawaited()
+    print("✔ Critic loop semantic ReDoS and unawaited promises passed")
+    test_benchmark_skill_and_cli()
+    print("✔ Benchmark skill and CLI runner passed")
     print("\n🎉 ALL TESTS PASSED (100% GREEN)")

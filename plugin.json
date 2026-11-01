@@ -1,15 +1,16 @@
 {
   "name": "antigravity-dev-suite",
-  "version": "1.9.0",
-  "description": "Enterprise Claude Opus 5.5 Coding Standard, ASD-STE100 Technical Communication & Cross-Platform Suite for Antigravity (macOS, Linux, Windows 10/11): Brainstorming, Planning, Strict TDD, Self-Healing Auto-Debug, Adversarial Code Review, Safe Refactoring, Dual-Viewport Playwright Visual QA, and Cloudflare-inspired Vulnerability Security Audit.",
+  "version": "1.10.0",
+  "description": "Enterprise Claude Opus 5.5 Coding Standard, ASD-STE100 Technical Communication & Cross-Platform Suite for Antigravity (macOS, Linux, Windows 10/11): Brainstorming, Planning, Strict TDD, Self-Healing Auto-Debug, Adversarial Code Review, Safe Refactoring, Dual-Viewport Playwright Visual QA, Vulnerability Security Audit, and Performance Benchmarking.",
   "displayName": "Antigravity Dev Suite",
   "suggestedPrompts": [
     "/opus-dev Esegui lo sviluppo end-to-end con standard Claude Opus 5.5, ASD-STE100, strict TDD e auto-debug",
     "/brainstorm Analizza i trade-off architetturali e confronta 2-3 approcci con gate KISS/YAGNI",
     "/plan Scomponi la feature in task atomici sequenziali con target TDD",
     "/auto-debug Esegui e auto-correggi la suite di test in closed-loop",
-    "/code-review Esegui un audit avversario a 4 pass (Invarianti & KISS, Concurrency, OWASP, ASD-STE100 & Strict Types)",
-    "/security-audit Esegui vulnerability hunting, mapping delle trust boundary e verifica avversaria Hunter vs Verifier",
+    "/code-review Esegui un audit avversario a 5 pass (Invarianti, Concorrenza, OWASP, Typestate & Strict Types, Performance)",
+    "/security-audit Esegui vulnerability hunting, mapping delle trust boundary, verifica Hunter vs Verifier e audit supply chain",
+    "/benchmark Esegui profiling delle prestazioni, rilevamento regressioni di latenza e analisi query N+1",
     "/refactor Riduci il debito tecnico e semplifica KISS preservando invarianti e test al 100%",
     "/visual-qa Esegui Playwright dual-viewport visual QA (Desktop 1280px + Mobile 375px)"
   ]

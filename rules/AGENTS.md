@@ -92,3 +92,35 @@ Whenever creating or modifying frontend layouts, HTML, CSS, React, Vue, or Svelt
    - Touch targets must be at least 44x44px.
    - Text must wrap naturally without clipping.
 3. **Zero Errors**: Confirm 0 JavaScript runtime errors, 0 unhandled promise rejections, and 0 HTTP 404s on assets.
+
+---
+
+## 9. Algorithmic Invariants & Asymptotic Complexity Proof
+- **Computational Complexity Bounds**: Limit time complexity to $O(1)$, $O(n)$, or $O(n \log n)$. Reject unneeded $O(n^2)$ algorithms.
+- **Quadratic Trap Elimination**: Never perform linear searches inside loops. Convert collections to hash sets or dictionaries before iteration.
+- **ReDoS Prevention**: Eliminate nested quantifiers (`(a+)+`, `(\d+)*`) in regular expressions to prevent catastrophic backtracking.
+- **Invariant Proving**: Define formal pre-conditions, post-conditions, and loop invariants before writing iterative logic.
+
+---
+
+## 10. Typestate Patterns, Branded Types & Compile-Time Invariants
+- **Branded Nominal Types**: Prevent primitive obsession. Brand identifier types (`type UserId = string & { readonly __brand: unique symbol }`).
+- **Typestate Pattern**: Model domain lifecycle transitions through distinct types to reject invalid state transitions at compile-time.
+- **Exhaustiveness Checking**: Enforce exhaustive pattern matching on discriminated unions using `never` (TypeScript) or `assert_never` (Python).
+- **Zero Mutable Defaults**: Never define mutable default arguments (`def fn(x=[])`) in Python functions.
+
+---
+
+## 11. Structured Concurrency, Cancellation & Resource Bounds
+- **Structured Concurrency**: Use structured primitives (`TaskGroup` in Python, `AbortController` in JS/TS, `errgroup` in Go).
+- **Cancellation Propagation**: Propagate cancellation tokens through every asynchronous downstream call.
+- **Concurrency Bounding**: Bound concurrent operations using semaphores or sized worker pools to prevent resource exhaustion.
+- **Floating Promise Elimination**: Always await, return, or explicitly catch every Promise in JavaScript and TypeScript.
+
+---
+
+## 12. Property-Based Testing, Mutation Hardening & Domain Isolation
+- **Property-Based Testing**: Supplement example unit tests with property fuzzing (`Hypothesis` in Python, `fast-check` in TypeScript).
+- **Mutation Hardening**: Verify that tests fail when mutating production logic. Ensure high assertion density.
+- **Domain Layer Isolation**: Keep core business logic independent of external frameworks, databases, and network transports.
+- **Supply Chain Security**: Scan dependencies using automated vulnerability auditing tools (`pip-audit`, `npm audit`, `cargo audit`).

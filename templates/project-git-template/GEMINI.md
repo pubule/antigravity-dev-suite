@@ -16,7 +16,8 @@ This repository follows the **Antigravity Dev Suite** engineering standards:
 - `/brainstorm`: Architectural trade-off analysis & KISS/YAGNI gating.
 - `/plan`: Milestone decomposition with explicit Red-Green TDD targets.
 - `/auto-debug`: Multi-ecosystem closed-loop auto-debugger.
-- `/code-review`: 4-Pass adversarial security, concurrency & typing audit.
-- `/security-audit`: Cloudflare-inspired vulnerability harness (Hunter vs. Verifier, attack surfaces, findings.json).
+- `/code-review`: 5-Pass adversarial security, concurrency, typestate & typing audit.
+- `/security-audit`: Cloudflare-inspired vulnerability harness (Hunter vs. Verifier, attack surfaces, findings.json, supply chain).
+- `/benchmark`: Performance profiling, latency regression detection, and N+1 query audit.
 - `/refactor`: Safe tech debt reduction preserving invariants and 100% green tests.
 - `/visual-qa`: Dual-viewport Playwright visual inspector.

@@ -13,14 +13,16 @@ When invoked with a feature request, design problem, or refactoring challenge:
    - Deconstruct functional and non-functional requirements (throughput, latency, fault tolerance, memory).
    - Identify domain boundaries and entity relationships.
 
-2. **KISS-First Pattern Evaluation**:
-   - Compare 2-3 suitable patterns (e.g., Minimal Standard Library vs Hexagonal / Ports & Adapters vs Event-Driven).
+2. **KISS-First Pattern Evaluation & Algorithmic Bounds**:
+   - Compare 2-3 suitable patterns (Minimal Standard Library vs Hexagonal / Ports & Adapters vs Event-Driven).
    - **KISS/YAGNI Gate**: Choose the simplest architecture with the minimum number of moving parts that satisfies the current requirements. Reject speculative abstractions and premature generalized frameworks.
-   - Evaluate algorithmic time/space complexity ($O(1)$, $O(n)$, $O(n \log n)$).
+   - Evaluate algorithmic time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Prevent $O(n^2)$ loops and ReDoS risks.
+   - Enforce Typestate patterns for domain state lifecycles and Branded Types for identifiers.
 
-3. **Invariants & API Protection**:
+3. **Invariants, Domain Isolation & Structured Concurrency**:
    - Identify existing public contracts and interfaces that must remain backwards-compatible.
-   - Enforce clean separation of concerns and dependency inversion.
+   - Enforce strict Domain-Driven Design boundaries: core business logic must remain decoupled from infrastructure.
+   - Design asynchronous workflows with Structured Concurrency and deterministic cancellation propagation.
 
 4. **Structured Decision Output**:
    Provide your recommendations in clear Markdown with:

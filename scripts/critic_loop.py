@@ -39,6 +39,9 @@ SECRET_PATTERNS = [
     (re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'), "Private Key"),
 ]
 
+REDOS_PATTERN = re.compile(r'\([^\)]*(?<!\\\\)[\+\*][^\)]*\)(?<!\\\\)[\+\*]|\([^\)\\]*[\+\*]\)\{[0-9]+,\}')
+UNPROTECTED_FETCH = re.compile(r'^\s*fetch\s*\(')
+
 def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all") -> dict:
     """Audits code syntax, structural integrity, OWASP security, and hygiene defect patterns."""
     logic_report = {
@@ -106,6 +109,7 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
 
     check_syntax = submode in ["all", "logic", "syntax"]
     check_security = submode in ["all", "logic", "security"]
+    check_semantic = submode in ["all", "logic", "security", "complexity", "semantic"]
 
     for file in files_to_check:
         if check_syntax:
@@ -116,25 +120,27 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                     logic_report["violations"].append(err)
                     logic_report["suggested_fixes"].append(f"Fix syntax/delimiter defect in {file.name}")
 
-        # Security and hygiene checks
-        if check_security:
+        # Security, hygiene, and semantic complexity checks
+        if check_security or check_semantic:
             try:
                 with open(file, "r", encoding="utf-8", errors="replace") as fc:
                     content = fc.read()
 
                 # 1. OWASP Top 10 Hardcoded Secret Scan
-                for pat, desc in SECRET_PATTERNS:
-                    if pat.search(content):
-                        logic_report["status"] = "RETRY"
-                        logic_report["violations"].append(f"SecurityViolation in {file.name}: potential hardcoded secret detected ({desc})")
-                        logic_report["suggested_fixes"].append("Extract secret into secure environment variable")
+                if check_security:
+                    for pat, desc in SECRET_PATTERNS:
+                        if pat.search(content):
+                            logic_report["status"] = "RETRY"
+                            logic_report["violations"].append(f"SecurityViolation in {file.name}: potential hardcoded secret detected ({desc})")
+                            logic_report["suggested_fixes"].append("Extract secret into secure environment variable")
 
-                # 2. Defensive Engineering: Empty Exception Block Detection in Python
+                # 2. Defensive Engineering & Semantic AST in Python
                 if file.suffix in [".py", ".pyi"]:
                     try:
                         tree = ast.parse(content, filename=str(file))
                         for node in ast.walk(tree):
-                            if isinstance(node, ast.ExceptHandler):
+                            # Empty exception handling
+                            if check_security and isinstance(node, ast.ExceptHandler):
                                 if len(node.body) == 1:
                                     stmt = node.body[0]
                                     is_pass = isinstance(stmt, ast.Pass)
@@ -148,8 +154,68 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                         action_word = "pass" if is_pass else "..."
                                         logic_report["violations"].append(f"EmptyExceptionHandling in {file.name}: empty 'except' block with {action_word} at line {node.lineno}")
                                         logic_report["suggested_fixes"].append("Handle exception or log with contextual details")
+
+                            # Mutable default arguments (def fn(x=[]))
+                            if check_semantic and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                all_defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d is not None]
+                                for d in all_defaults:
+                                    if isinstance(d, (ast.List, ast.Dict, ast.Set)):
+                                        logic_report["status"] = "RETRY"
+                                        logic_report["violations"].append(
+                                            f"MutableDefaultArgument in {file.name}: function '{node.name}' defines mutable default argument at line {node.lineno}"
+                                        )
+                                        logic_report["suggested_fixes"].append(
+                                            f"Use None as default in '{node.name}' and initialize collection dynamically inside body"
+                                        )
+
+                            # ReDoS check in Python re.compile calls
+                            if check_semantic and isinstance(node, ast.Call):
+                                func = node.func
+                                is_re = False
+                                if isinstance(func, ast.Attribute) and func.attr == "compile":
+                                    if isinstance(func.value, ast.Name) and func.value.id in ("re", "regex"):
+                                        is_re = True
+                                elif isinstance(func, ast.Name) and func.id in ("compile", "re_compile"):
+                                    is_re = True
+                                if is_re and node.args:
+                                    first_arg = node.args[0]
+                                    if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                                        m = REDOS_PATTERN.search(first_arg.value)
+                                        if m:
+                                            logic_report["status"] = "RETRY"
+                                            logic_report["violations"].append(
+                                                f"ReDoSRisk in {file.name}: regex contains nested quantifiers '{m.group(0)}' with catastrophic backtracking risk at line {node.lineno}"
+                                            )
+                                            logic_report["suggested_fixes"].append(
+                                                "Refactor regex to eliminate nested quantifiers and prevent catastrophic backtracking"
+                                            )
                     except Exception as ast_err:
                         logic_report["details"][f"{file.name}_ast_notice"] = str(ast_err)
+
+                # 3. JavaScript / TypeScript Semantic & Concurrency Checks
+                if check_semantic and file.suffix in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]:
+                    for line_idx, line in enumerate(content.splitlines(), start=1):
+                        stripped = line.strip()
+                        # Unawaited fetch call
+                        if UNPROTECTED_FETCH.search(line) and not stripped.startswith("//") and not stripped.startswith("/*"):
+                            logic_report["status"] = "RETRY"
+                            logic_report["violations"].append(
+                                f"UnawaitedPromise in {file.name}: floating fetch() call without await, return, or void at line {line_idx}"
+                            )
+                            logic_report["suggested_fixes"].append(
+                                "Await promise or handle rejection with .catch() or return statement"
+                            )
+                        # ReDoS in JS RegExp constructor or regex literals
+                        if ("RegExp" in line or "= /" in line or line.startswith("/")) and not stripped.startswith("//"):
+                            m = REDOS_PATTERN.search(line)
+                            if m:
+                                logic_report["status"] = "RETRY"
+                                logic_report["violations"].append(
+                                    f"ReDoSRisk in {file.name}: regex contains nested quantifiers '{m.group(0)}' at line {line_idx}"
+                                )
+                                logic_report["suggested_fixes"].append(
+                                    "Refactor regex to eliminate nested quantifiers and prevent catastrophic backtracking"
+                                )
             except Exception as read_err:
                 logic_report["details"][f"{file.name}_read_notice"] = str(read_err)
 
@@ -235,7 +301,7 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
     }
 
     # 1. Logic & AST Critique
-    if mode in ["logic", "all", "syntax", "security"]:
+    if mode in ["logic", "all", "syntax", "security", "complexity", "semantic"]:
         logic_res = audit_code_logic(target, test_mode=test_mode, submode=mode)
         if logic_res["status"] == "RETRY":
             report["status"] = "RETRY"
@@ -260,7 +326,7 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Critic Loop Runner (Claude Opus 5.5 Standard)")
-    parser.add_argument("--mode", choices=["logic", "visual", "syntax", "security", "all"], default="all", help="Critic evaluation mode")
+    parser.add_argument("--mode", choices=["logic", "visual", "syntax", "security", "complexity", "semantic", "all"], default="all", help="Critic evaluation mode")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
     parser.add_argument("--target", dest="target_flag", default=None, help="Target file or directory (flag form)")
     parser.add_argument("target", nargs="?", default="", help="File or directory target (positional)")

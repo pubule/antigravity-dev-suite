@@ -42,6 +42,9 @@ Identify and document all entry points, trust transitions, and sinks:
 3. **Data Sinks**:
    - Database queries (SQL/NoSQL/ORM), shell execution, and filesystem operations.
    - Deserialization sinks, reflection calls, and dynamic memory allocations.
+4. **Supply Chain & Dependency Auditing** (`references/supply-chain.md`):
+   - Dependency vulnerability scanning: `pip-audit`, `npm audit`, `cargo audit`, `govulncheck`.
+   - Lockfile integrity: unpinned dependencies, malicious package replacements, and registry confusion.
 
 ---
 
@@ -64,6 +67,10 @@ Audit components systematically against specialized attack classes:
    - Unsafe deserialization and prototype pollution.
    - Path traversal and arbitrary file write/overwrite.
    - Buffer overflows, integer wraps, and use-after-free (C/C++/Rust unsafe blocks).
+4. **Supply Chain & Third-Party Integrity** (`references/supply-chain.md`):
+   - Transitive dependency vulnerabilities with reachable exploitation paths.
+   - Unpinned dependencies and dependency confusion attacks.
+   - Lifecycle install scripts (`postinstall`, `build.rs`) executing arbitrary shell commands.
 
 ---
 

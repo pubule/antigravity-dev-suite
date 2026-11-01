@@ -67,6 +67,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Rust (Cargo)",
             "test_command": "cargo test",
             "lint_command": "cargo clippy --all-targets",
+            "benchmark_command": "cargo bench",
             "markers": ["Cargo.toml"]
         }
 
@@ -77,6 +78,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Go",
             "test_command": "go test -v ./...",
             "lint_command": "go vet ./... && staticcheck ./...",
+            "benchmark_command": "go test -bench=. -benchmem ./...",
             "markers": ["go.mod"]
         }
 
@@ -87,6 +89,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Python (uv)",
             "test_command": "uv run pytest",
             "lint_command": "uv run ruff check . && uv run mypy .",
+            "benchmark_command": "uv run pytest -v --benchmark-only",
             "markers": ["uv.lock"]
         }
     if (ws / "poetry.lock").is_file():
@@ -95,6 +98,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Python (poetry)",
             "test_command": "poetry run pytest",
             "lint_command": "poetry run mypy .",
+            "benchmark_command": "poetry run pytest -v --benchmark-only",
             "markers": ["poetry.lock"]
         }
     py_markers = [m for m in ("pytest.ini", "pyproject.toml", "setup.cfg") if (ws / m).is_file()]
@@ -106,6 +110,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Python (pytest)",
             "test_command": "pytest -v",
             "lint_command": "ruff check . && mypy .",
+            "benchmark_command": "pytest -v --benchmark-only",
             "markers": py_markers
         }
 
@@ -117,6 +122,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Node / TypeScript (Vitest)",
             "test_command": "npx vitest run",
             "lint_command": "npx tsc --noEmit && npx eslint .",
+            "benchmark_command": "npx vitest bench",
             "markers": ["vite.config.ts"] if (ws / "vite.config.ts").is_file() else ["vitest.config.ts"]
         }
     if (ws / "bun.lockb").is_file() or (ws / "bunfig.toml").is_file():
@@ -125,6 +131,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Bun",
             "test_command": "bun test",
             "lint_command": "bunx tsc --noEmit && bunx eslint .",
+            "benchmark_command": "bun test --bench",
             "markers": ["bun.lockb"] if (ws / "bun.lockb").is_file() else ["bunfig.toml"]
         }
     if (ws / "deno.json").is_file() or (ws / "deno.jsonc").is_file():
@@ -133,6 +140,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Deno",
             "test_command": "deno test",
             "lint_command": "deno lint && deno check",
+            "benchmark_command": "deno bench",
             "markers": ["deno.json"] if (ws / "deno.json").is_file() else ["deno.jsonc"]
         }
     if (ws / "pnpm-lock.yaml").is_file():
@@ -141,6 +149,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Node (pnpm)",
             "test_command": "pnpm test",
             "lint_command": "pnpm run typecheck",
+            "benchmark_command": "pnpm run bench",
             "markers": ["pnpm-lock.yaml"]
         }
     if has_pkg:
@@ -149,6 +158,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Node (npm)",
             "test_command": "npm test",
             "lint_command": "npx tsc --noEmit",
+            "benchmark_command": "npm run bench",
             "markers": ["package.json"]
         }
 
@@ -160,6 +170,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": ".NET / C#",
             "test_command": "dotnet test",
             "lint_command": "dotnet build",
+            "benchmark_command": "dotnet test -c Release --filter *Benchmark*",
             "markers": [cs_files[0].name]
         }
 
@@ -170,6 +181,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Java (Maven)",
             "test_command": "mvn test",
             "lint_command": "mvn compile",
+            "benchmark_command": "mvn test-compile exec:java -Dexec.classpathScope=test",
             "markers": ["pom.xml"]
         }
     if (ws / "build.gradle").is_file() or (ws / "build.gradle.kts").is_file():
@@ -178,6 +190,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Java/Kotlin (Gradle)",
             "test_command": "./gradlew test",
             "lint_command": "./gradlew check",
+            "benchmark_command": "./gradlew jmh",
             "markers": ["build.gradle"]
         }
 
@@ -188,6 +201,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "C / C++ (CMake)",
             "test_command": "ctest --output-on-failure",
             "lint_command": "cmake --build build",
+            "benchmark_command": "ctest -R bench",
             "markers": ["CMakeLists.txt"]
         }
 
@@ -198,6 +212,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Ruby (Bundler)",
             "test_command": "bundle exec rspec",
             "lint_command": "bundle exec rubocop",
+            "benchmark_command": "bundle exec rake bench",
             "markers": ["Gemfile"]
         }
 
@@ -208,6 +223,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "PHP",
             "test_command": "vendor/bin/phpunit",
             "lint_command": "vendor/bin/phpstan analyse",
+            "benchmark_command": "vendor/bin/phpbench run",
             "markers": ["composer.json"] if (ws / "composer.json").is_file() else ["phpunit.xml"]
         }
 
@@ -218,6 +234,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "ecosystem": "Swift",
             "test_command": "swift test",
             "lint_command": "swift build",
+            "benchmark_command": "swift test -c release",
             "markers": ["Package.swift"]
         }
 
@@ -226,6 +243,7 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
         "ecosystem": "Generic",
         "test_command": "npm test || pytest || cargo test || go test",
         "lint_command": "",
+        "benchmark_command": "npm run bench || cargo bench || go test -bench=.",
         "markers": []
     }
 
@@ -264,6 +282,61 @@ def run_project_tests(workspace_dir: str | Path | None = None, command_override:
             "duration_seconds": round(time.time() - t0, 3),
             "stdout": "",
             "stderr": f"Execution timed out after 120s: {cmd}"
+        }
+    except Exception as e:
+        return {
+            "status": "ERROR",
+            "command": cmd,
+            "returncode": -1,
+            "duration_seconds": round(time.time() - t0, 3),
+            "stdout": "",
+            "stderr": str(e)
+        }
+
+def run_project_benchmarks(workspace_dir: str | Path | None = None, command_override: str = "") -> dict:
+    """Executes detected or specified benchmark command and captures performance output."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    cmd = command_override
+    if not cmd:
+        det = detect_project_framework(ws)
+        cmd = det.get("benchmark_command", "")
+    if not cmd:
+        return {
+            "status": "UNSUPPORTED",
+            "command": "",
+            "returncode": -1,
+            "duration_seconds": 0.0,
+            "stdout": "",
+            "stderr": "No benchmark command detected for workspace"
+        }
+
+    t0 = time.time()
+    try:
+        res = subprocess.run(
+            cmd,
+            shell=True,
+            cwd=str(ws),
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+        duration = round(time.time() - t0, 3)
+        return {
+            "status": "PASS" if res.returncode == 0 else "FAIL",
+            "command": cmd,
+            "returncode": res.returncode,
+            "duration_seconds": duration,
+            "stdout": res.stdout,
+            "stderr": res.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "TIMEOUT",
+            "command": cmd,
+            "returncode": -1,
+            "duration_seconds": round(time.time() - t0, 3),
+            "stdout": "",
+            "stderr": f"Benchmark execution timed out after 180s: {cmd}"
         }
     except Exception as e:
         return {
@@ -317,6 +390,12 @@ def handle_cli_mode() -> bool:
         print(json.dumps(res, indent=2))
         sys.exit(0 if res["status"] == "PASS" else 1)
 
+    if first in ("--run-benchmark", "--run-benchmarks", "--benchmark"):
+        ws = args[1] if len(args) > 1 else None
+        res = run_project_benchmarks(ws)
+        print(json.dumps(res, indent=2))
+        sys.exit(0 if res["status"] == "PASS" else 1)
+
     return False
 
 def main():
@@ -367,7 +446,7 @@ def main():
                     print(f"⚠️ [Antigravity Auto-Debug] Diagnostic cache write failed: {write_err}", file=sys.stderr)
 
 if __name__ == "__main__":
-    is_cli = len(sys.argv) > 1 and sys.argv[1] in ("--detect", "-d", "--last-error", "--clear-last-error", "--check", "--run-tests")
+    is_cli = len(sys.argv) > 1 and sys.argv[1] in ("--detect", "-d", "--last-error", "--clear-last-error", "--check", "--run-tests", "--run-benchmark", "--run-benchmarks", "--benchmark")
     try:
         main()
     finally:

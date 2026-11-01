@@ -23,16 +23,18 @@ List the exact files to create or modify:
 - **Created**: e.g., `src/auth/jwt_provider.py`, `tests/test_jwt_provider.py`
 - **Modified**: e.g., `src/config.py`, `src/routes/api.py`
 
-### 2. Invariants & Negative Constraints
-- Explicitly declare the public contracts, database models, or external interfaces that **must remain unbroken**.
+### 2. Invariants, Algorithmic Bounds & Negative Constraints
+- Explicitly declare public contracts, database models, or external interfaces that **must remain unbroken**.
+- Define algorithmic bounds ($O(1)$, $O(n)$, $O(n \log n)$). Identify and eliminate quadratic or ReDoS risks.
+- Define domain Typestate transitions and Branded Type definitions.
 
 ### 3. Atomic Task Breakdown (Red-Green Sequence)
 Format each subtask as an atomic, verifiable unit:
 
-#### Task 1: [Domain Model & Interface Definition]
+#### Task 1: [Domain Model, Typestate & Property Tests]
 - **Target Files**: `src/models/user.py`
-- **Test Target (RED)**: Write failing test in `tests/test_user.py` asserting validation and serialization.
-- **Production Code (GREEN)**: Implement Pydantic/dataclass model.
+- **Test Target (RED)**: Write failing property-based test in `tests/test_user.py` asserting validation invariants.
+- **Production Code (GREEN)**: Implement model with Branded Types and Typestate transitions.
 - **Verification Command**: `pytest tests/test_user.py -v`
 
 #### Task 2: [Service Layer Logic]

@@ -25,31 +25,31 @@ flowchart TD
 
 ---
 
-### Phase 1: Rapid Design & KISS/YAGNI Gate (Inspired by `/brainstorm`)
+### Phase 1: Rapid Design & Algorithmic Bounds Gate (Inspired by `/brainstorm`)
 - **Zero Filler (ASD-STE100)**: Start immediately with structured technical analysis.
-- **KISS & YAGNI Check**: Choose the simplest design with the minimum number of moving parts. Avoid speculative abstractions or forward-looking configuration bloat.
+- **KISS & YAGNI Check**: Choose the simplest design with the minimum number of moving parts. Avoid speculative abstractions.
+- **Algorithmic Bounds**: Bound time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns.
 - **Negative Constraints Matrix**: Verify public API stability and forbidden patterns.
 
 ### Phase 2: Atomic Plan & Test Targets (Inspired by `/plan`)
 - Break the task into atomic, verifiable subtasks (1-2 files per step).
 - For each subtask, specify:
-  - Exact file paths to create/edit.
-  - The failing test to write first (RED).
-  - The minimal implementation to satisfy the test (GREEN).
+  - Exact file paths to create or edit.
+  - The failing test to write first (RED), including boundary and property-based targets.
+  - The minimal implementation to satisfy the test (GREEN), applying Typestate patterns and Branded Types.
 
-### Phase 3: Defensive TDD Execution (KISS & Minimal)
-- **RED**: Write and execute unit/integration tests proving requirements and boundary conditions (`0`, `-1`, `null`, empty collections, concurrency, timeouts).
+### Phase 3: Defensive TDD & Property-Based Execution
+- **RED**: Write and execute unit and property-based tests proving requirements, invariants, and edge cases (`0`, `-1`, `null`, empty collections, timeouts).
 - **GREEN**: Implement minimal, highly typed production code:
-  - Enforce strict typing (TypeScript `strict`, Python Pydantic/typing, Rust Result/Option, Go error checks).
+  - Enforce strict typing, Branded Types for identifiers, and Typestate patterns for domain lifecycles.
+  - Implement Structured Concurrency with cancellation token propagation.
   - Handle resource lifecycles (`try...finally`, `with`, `defer`).
-  - No premature optimization or extra features beyond what tests require.
+  - Eliminate mutable default arguments (`def fn(x=[])`).
 
-### Phase 4: Autonomous Closed-Loop Auto-Debug (`/auto-debug`)
+### Phase 4: Autonomous Closed-Loop Auto-Debug & Benchmark Gate (`/auto-debug`, `/benchmark`)
 - Execute the test suite in terminal (`npm test`, `pytest`, `cargo test`, `go test`).
-- If any test or typecheck fails:
-  - Analyze the stacktrace at the AST and semantic level.
-  - Apply minimal targeted surgical fix.
-  - Re-verify in a closed loop (up to 3 autonomous cycles) until 100% green.
+- If any test fails, analyze stacktraces at the AST level and apply minimal surgical fixes.
+- If performance regressions occur, run benchmark runner (`python3 scripts/auto_debug_runner.py --run-benchmark`).
 
 ### Phase 5: Adversarial Audit & Self-Healing Loop (`claude-critic`, `visual-qa`)
 - **Pre-Flight Static Audit**: Execute `python3 scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, and exposed secrets before invoking review.
