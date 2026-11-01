@@ -113,7 +113,7 @@ antigravity-dev-suite/
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
 ├── tests/                      # Automated Verification & TDD Suite
-│   └── test_plugin_suite.py    # Full unit and integration test suite (110 automated checks)
+│   └── test_plugin_suite.py    # Full unit and integration test suite (115 automated checks)
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux
@@ -160,8 +160,26 @@ python3 scripts/auto_debug_runner.py --detect
 # Run detected test suite autonomously
 python3 scripts/auto_debug_runner.py --run-tests
 
+# Run static typecheck autonomously
+python3 scripts/auto_debug_runner.py --typecheck
+
+# Run concurrency race detector
+python3 scripts/auto_debug_runner.py --race
+
+# Run property-based fuzz tests
+python3 scripts/auto_debug_runner.py --fuzz
+
+# Run test coverage analyzer
+python3 scripts/auto_debug_runner.py --coverage
+
+# Run mutation testing suite
+python3 scripts/auto_debug_runner.py --mutation
+
 # Run detected microbenchmarks autonomously
 python3 scripts/auto_debug_runner.py --benchmark
+
+# Install pre-commit Git hook for local repo
+python3 scripts/auto_debug_runner.py --install-git-hooks
 
 # Validate single file syntax and bracket balance
 python3 scripts/auto_debug_runner.py --check <path/to/file>
@@ -173,7 +191,19 @@ python3 scripts/auto_debug_runner.py --last-error
 python3 scripts/auto_debug_runner.py --clear-last-error
 ```
 
-### 2. Critic Loop Orchestrator (`critic_loop.py`)
+### 2. Pre-Commit Git Hook Installer (`install_git_hooks.py`)
+```bash
+# Install automated pre-commit hook into .git/hooks/pre-commit
+python3 scripts/install_git_hooks.py --install
+
+# Check installation status
+python3 scripts/install_git_hooks.py --status
+
+# Uninstall pre-commit hook
+python3 scripts/install_git_hooks.py --uninstall
+```
+
+### 3. Critic Loop Orchestrator (`critic_loop.py`)
 ```bash
 # Run full static audit across target directory
 python3 scripts/critic_loop.py --mode all --target .
@@ -191,7 +221,7 @@ python3 scripts/critic_loop.py --mode security --target .
 python3 scripts/critic_loop.py --mode all --test-mode
 ```
 
-### 3. Visual QA Runner (`visual_qa.py`)
+### 4. Visual QA Runner (`visual_qa.py`)
 ```bash
 # Capture dual-viewport screenshots against detected or default dev server
 python3 scripts/visual_qa.py
@@ -201,7 +231,7 @@ python3 scripts/visual_qa.py --dev-server http://localhost:5173
 python3 scripts/visual_qa.py --port 3000
 ```
 
-### 4. Autonomous Multi-Pass Audit Loops
+### 5. Autonomous Multi-Pass Audit Loops
 ```bash
 # Unix (macOS / Linux)
 ./scripts/run_audit_loop.sh -n 3 -m all -w .

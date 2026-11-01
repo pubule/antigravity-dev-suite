@@ -30,6 +30,7 @@ flowchart TD
 - **KISS & YAGNI Check**: Choose the simplest design with the minimum number of moving parts. Avoid speculative abstractions.
 - **Algorithmic Bounds**: Bound time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns.
 - **Negative Constraints Matrix**: Verify public API stability and forbidden patterns.
+- **ADR Persistence**: For significant architectural choices, record an Architecture Decision Record under `docs/adr/`.
 
 ### Phase 2: Atomic Plan & Test Targets (Inspired by `/plan`)
 - Break the task into atomic, verifiable subtasks (1-2 files per step).
@@ -42,18 +43,22 @@ flowchart TD
 - **RED**: Write and execute unit and property-based tests proving requirements, invariants, and edge cases (`0`, `-1`, `null`, empty collections, timeouts).
 - **GREEN**: Implement minimal, highly typed production code:
   - Enforce strict typing, Branded Types for identifiers, and Typestate patterns for domain lifecycles.
-  - Implement Structured Concurrency with cancellation token propagation.
+  - Implement Structured Concurrency with cancellation token propagation and bound worker pools.
   - Handle resource lifecycles (`try...finally`, `with`, `defer`).
   - Eliminate mutable default arguments (`def fn(x=[])`).
+  - Execute property-based fuzzing tests (`python3 scripts/auto_debug_runner.py --fuzz`).
 
-### Phase 4: Autonomous Closed-Loop Auto-Debug & Benchmark Gate (`/auto-debug`, `/benchmark`)
-- Execute the test suite in terminal (`npm test`, `pytest`, `cargo test`, `go test`).
-- If any test fails, analyze stacktraces at the AST level and apply minimal surgical fixes.
-- If performance regressions occur, run benchmark runner (`python3 scripts/auto_debug_runner.py --run-benchmark`).
+### Phase 4: Autonomous Closed-Loop Auto-Debug, Typecheck & Race Gate (`/auto-debug`, `/benchmark`)
+- Execute test runner autonomously (`python3 scripts/auto_debug_runner.py --run-tests`).
+- Execute static typecheck (`python3 scripts/auto_debug_runner.py --typecheck`).
+- Execute concurrency race detector (`python3 scripts/auto_debug_runner.py --race`).
+- Validate database migrations against Rule 14 zero-downtime expand/contract requirements.
+- Use context window token hygiene: condense voluminous passing test output and isolate AST failure traces.
+- If performance regressions occur, run benchmark runner (`python3 scripts/auto_debug_runner.py --benchmark`).
 
 ### Phase 5: Adversarial Audit & Self-Healing Loop (`claude-critic`, `visual-qa`)
-- **Pre-Flight Static Audit**: Execute `python3 scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, and exposed secrets before invoking review.
-- **Adversarial Audit**: Invoke `claude-critic` across the 7 Opus pillars (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Type Safety, Boundary Conditions).
+- **Pre-Flight Static Audit**: Execute `python3 scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, exposed secrets, unreleased mutexes, and dangerous migration patterns.
+- **Adversarial Audit**: Invoke `claude-critic` across the 7 Opus pillars (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Type Safety, Boundary Conditions, Migrations).
 - **Frontend / UI**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and review via `visual-qa-critic`.
 - **Closed-Loop Resolution**:
   - If the critic returns `RETRY`, parse all reported violations and suggested fixes.
