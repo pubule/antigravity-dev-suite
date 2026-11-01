@@ -77,3 +77,4 @@ flowchart TD
   - Re-run test suite and re-audit via `claude-critic`.
   - **Repeat the loop until the critic returns status `PASS` with 0 violations.**
 - **Delivery**: Present conclusive terminal verification evidence and final clean critic verdict in ASD-STE100 format.
+- **Session Transfer & Handoff**: If context budget is reached or session concludes, run `/handoff` to serialize the briefing and telemetry for the subsequent session.

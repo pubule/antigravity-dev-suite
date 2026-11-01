@@ -359,6 +359,54 @@ python3 scripts/semantic_slice.py path/to/file.py --symbol process_data --compac
 .\scripts\run_audit_loop.ps1 -MaxCycles 3 -Mode all -WorkspacePath .
 ```
 
+### 9. Session Handoff Generator (`handoff.py`)
+```bash
+# Generate session handoff briefing into system temporary directory
+python3 scripts/handoff.py "Target objective for next session" --summary "Technical notes"
+
+# Run via auto debug runner
+python3 scripts/auto_debug_runner.py --handoff "Target objective"
+
+# Emit machine-readable JSON metadata
+python3 scripts/handoff.py --json
+```
+
+### 10. Dual-Gate Stop Validator (`stop_gate.py`)
+```bash
+# Validate that both test suite (PASS) and critic loop (PASS) are verified
+python3 scripts/stop_gate.py
+
+# Emit JSON decision verdict for automated hook consumption
+python3 scripts/stop_gate.py --json
+```
+
+### 11. AST Diff Guard & Cognitive Complexity (`diff_guard.py`)
+```bash
+# Inspect working tree diffs for comment stripping and cognitive complexity violations
+python3 scripts/diff_guard.py
+
+# Target specific workspace path
+python3 scripts/diff_guard.py --target .
+```
+
+### 12. Polyglot Symbol Impact Tracer (`symbol_impact.py`)
+```bash
+# Trace callers, definitions, and references for a symbol before refactoring
+python3 scripts/symbol_impact.py <symbol_name>
+
+# Restrict search to specific directory
+python3 scripts/symbol_impact.py <symbol_name> --target src/
+```
+
+### 13. Adversarial Test Scaffolder (`test_scaffolder.py`)
+```bash
+# Generate boundary, edge-case, and null-guard test scaffolding for target source
+python3 scripts/test_scaffolder.py path/to/source.py
+
+# Emit scaffolded test code to standard output or test file
+python3 scripts/test_scaffolder.py path/to/source.py --output tests/test_generated.py
+```
+
 ---
 
 ## 👥 Zero-Setup Team Sharing (Per-Repository)
