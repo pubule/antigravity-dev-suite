@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.13.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.14.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -71,7 +71,7 @@ flowchart TD
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.13.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.14.0)
 ├── hooks.json                  # Root PreToolUse & PostToolUse hook configuration
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)
@@ -103,6 +103,7 @@ antigravity-dev-suite/
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
 │   ├── validator_core.py       # Core AST, regex, JSONC, polyglot raw strings, and delimiter parser
 │   ├── auto_debug_runner.py    # Universal PostToolUse hook processor, tests, typecheck, race, fuzz & flaky runner
+│   ├── semantic_slice.py       # AST & brace symbol slicer for Flash 3.8 context hygiene
 │   ├── api_contract_guard.py   # Automated public API contract drift detector (Python, TS, Go, Rust)
 │   ├── repo_map.py             # Token-budgeted repository symbol and topology mapper
 │   ├── auto_debug_runner.sh    # Resilient Unix wrapper for auto-debug hook execution
@@ -275,7 +276,25 @@ python3 scripts/visual_qa.py --port 3000
 python3 scripts/visual_qa.py --test-mode
 ```
 
-### 7. Autonomous Multi-Pass Audit Loops
+### 7. Semantic Symbol Slicer (`semantic_slice.py`)
+```bash
+# Extract specific function or class AST slice from Python or TS/JS file
+python3 scripts/semantic_slice.py path/to/file.py --symbol my_function
+
+# Extract symbol slice along with file-level imports and dependencies
+python3 scripts/semantic_slice.py path/to/file.py --symbol MyClass --with-imports
+
+# Extract symbol containing specific line number
+python3 scripts/semantic_slice.py path/to/file.ts --line 142
+
+# List all top-level symbols in file without reading file body
+python3 scripts/semantic_slice.py path/to/file.py --list
+
+# Emit compact minified output for Gemini Flash 3.8 prompt hygiene
+python3 scripts/semantic_slice.py path/to/file.py --symbol process_data --compact
+```
+
+### 8. Autonomous Multi-Pass Audit Loops
 ```bash
 # Unix (macOS / Linux)
 ./scripts/run_audit_loop.sh -n 3 -m all -w .

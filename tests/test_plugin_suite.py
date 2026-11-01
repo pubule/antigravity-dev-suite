@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.13.0"
+        assert data.get("version") == "1.14.0"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -2762,7 +2762,7 @@ def test_commit_skill_and_v11_plugin_manifest():
 
     # 2. Plugin manifest
     manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
-    assert manifest["version"] == "1.13.0"
+    assert manifest["version"] == "1.14.0"
     assert any("/commit" in p for p in manifest["suggestedPrompts"])
 
     # 3. Project template GEMINI.md
@@ -3067,6 +3067,170 @@ def test_visual_qa_wcag_accessibility_checks():
     clean_violations = visual_qa.audit_html_accessibility(good_html)
     assert len(clean_violations) == 0
 
+def test_semantic_slice_python_and_brace():
+    import semantic_slice
+
+    py_code = """import os
+import sys
+
+def calculate_sum(a: int, b: int) -> int:
+    \"\"\"Docstring\"\"\"
+    return a + b
+
+class MathService:
+    def multiply(self, x: int, y: int) -> int:
+        return x * y
+"""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(py_code)
+        py_file = Path(f.name)
+
+    ts_code = """import { Client } from './client';
+
+export function processItem(id: string): boolean {
+    console.log(id);
+    return true;
+}
+
+export class OrderProcessor {
+    execute(): void {}
+}
+"""
+    with tempfile.NamedTemporaryFile(suffix=".ts", mode="w", delete=False) as f:
+        f.write(ts_code)
+        ts_file = Path(f.name)
+
+    try:
+        # 1. Python slice by symbol
+        res_sym = semantic_slice.extract_symbol_slice(py_file, target_symbol="calculate_sum")
+        assert res_sym["status"] == "SUCCESS"
+        assert res_sym["symbol"] == "calculate_sum"
+        assert "def calculate_sum" in res_sym["content"]
+        assert res_sym["start_line"] == 4
+
+        # 2. Python nested method by symbol
+        res_meth = semantic_slice.extract_symbol_slice(py_file, target_symbol="multiply")
+        assert res_meth["status"] == "SUCCESS"
+        assert "MathService.multiply" in res_meth["symbol"]
+
+        # 3. Python slice by line
+        res_line = semantic_slice.extract_symbol_slice(py_file, target_line=5)
+        assert res_line["status"] == "SUCCESS"
+        assert res_line["symbol"] == "calculate_sum"
+
+        # 4. TypeScript slice by symbol
+        res_ts = semantic_slice.extract_symbol_slice(ts_file, target_symbol="processItem")
+        assert res_ts["status"] == "SUCCESS"
+        assert "processItem" in res_ts["symbol"]
+        assert "export function processItem" in res_ts["content"]
+
+        # 5. CLI runner test with --json
+        code, stdout, stderr = run_script("semantic_slice.py", [str(py_file), "--symbol", "calculate_sum", "--json"])
+        assert code == 0
+        cli_data = json.loads(stdout)
+        assert cli_data["status"] == "SUCCESS"
+        assert cli_data["symbol"] == "calculate_sum"
+    finally:
+        if py_file.exists():
+            py_file.unlink()
+        if ts_file.exists():
+            ts_file.unlink()
+
+def test_critic_loop_quadratic_traps():
+    import critic_loop
+
+    # 1. Python .index() in loop
+    bad_py_index = """
+def find_indices(items, targets):
+    result = []
+    for t in targets:
+        result.append(items.index(t))
+    return result
+"""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(bad_py_index)
+        bad_file = f.name
+    try:
+        rep = critic_loop.audit_code_logic(bad_file, submode="semantic")
+        assert rep["status"] == "RETRY"
+        assert any("QuadraticTrap" in v and ".index()" in v for v in rep["violations"])
+    finally:
+        if os.path.exists(bad_file):
+            os.remove(bad_file)
+
+    # 2. Python in <list> in loop
+    bad_py_list = """
+def match_items(keys, raw_items):
+    matched = []
+    for k in keys:
+        if k in raw_items:
+            matched.append(k)
+    return matched
+"""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(bad_py_list)
+        bad_file2 = f.name
+    try:
+        rep2 = critic_loop.audit_code_logic(bad_file2, submode="semantic")
+        assert rep2["status"] == "RETRY"
+        assert any("QuadraticTrap" in v and "raw_items" in v for v in rep2["violations"])
+    finally:
+        if os.path.exists(bad_file2):
+            os.remove(bad_file2)
+
+    # 3. Python loop with # nosec suppression
+    safe_py = """
+def match_items(keys, raw_items):
+    matched = []
+    for k in keys:
+        if k in raw_items:  # nosec
+            matched.append(k)
+    return matched
+"""
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write(safe_py)
+        safe_file = f.name
+    try:
+        rep_safe = critic_loop.audit_code_logic(safe_file, submode="semantic")
+        assert rep_safe["status"] == "PASS"
+    finally:
+        if os.path.exists(safe_file):
+            os.remove(safe_file)
+
+    # 4. JS .indexOf() inside loop
+    bad_js = """
+function processList(arr, keys) {
+    for (let i = 0; i < keys.length; i++) {
+        const idx = arr.indexOf(keys[i]);
+    }
+}
+"""
+    with tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False) as f:
+        f.write(bad_js)
+        bad_js_file = f.name
+    try:
+        rep_js = critic_loop.audit_code_logic(bad_js_file, submode="semantic")
+        assert rep_js["status"] == "RETRY"
+        assert any("QuadraticTrap" in v for v in rep_js["violations"])
+    finally:
+        if os.path.exists(bad_js_file):
+            os.remove(bad_js_file)
+
+def test_auto_debug_runner_non_code_early_exit():
+    # Test that writing a non-code text file exits cleanly without error
+    with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
+        f.write("Some arbitrary log or text content without syntax rules\n")
+        txt_file = f.name
+    try:
+        payload = json.dumps({"toolCall": {"name": "write_file", "args": {"Path": txt_file}}})
+        code, stdout, stderr = run_script("auto_debug_runner.py", [], input_data=payload)
+        assert code == 0
+        assert stdout.strip() == "{}"
+        assert stderr.strip() == ""
+    finally:
+        if os.path.exists(txt_file):
+            os.remove(txt_file)
+
 import unittest
 
 class AntigravityDevSuiteTestCase(unittest.TestCase):
@@ -3325,4 +3489,10 @@ if __name__ == "__main__":
     print("✔ Critic loop Rust safe unwraps and SQL drops passed")
     test_visual_qa_wcag_accessibility_checks()
     print("✔ Visual QA WCAG 2.1 AA accessibility checks passed")
+    test_semantic_slice_python_and_brace()
+    print("✔ Semantic symbol slicing (Python & brace languages) passed")
+    test_critic_loop_quadratic_traps()
+    print("✔ Critic loop quadratic trap detector passed")
+    test_auto_debug_runner_non_code_early_exit()
+    print("✔ Auto debug runner non-code early exit passed")
     print("\n🎉 ALL TESTS PASSED (100% GREEN)")

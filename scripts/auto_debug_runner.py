@@ -58,10 +58,10 @@ def clear_last_syntax_error() -> bool:
             return False
     return False
 
-def condense_test_output(raw_stdout: str, raw_stderr: str, max_lines: int = 40) -> str:
+def condense_test_output(raw_stdout: str, raw_stderr: str, max_lines: int = 30) -> str:
     """
     Compresses voluminous test or tool output to preserve LLM context window token hygiene.
-    Extracts summary lines, failures, assertion errors, and tracebacks.
+    Extracts high-signal root assertion frames, failures, and expected vs actual diffs.
     """
     combined = []
     if raw_stdout:
@@ -75,18 +75,28 @@ def condense_test_output(raw_stdout: str, raw_stderr: str, max_lines: int = 40) 
     signal_keywords = (
         "FAIL", "ERROR", "AssertionError", "assert ", "panic:", "Exception",
         "Traceback (most recent call last):", "fatal:", "Error:", "=== FAIL",
-        "--- FAIL", "failed", "passed", "skipped", "warnings", "warning"
+        "--- FAIL", "failed", "passed", "skipped", "Expected:", "Received:",
+        "Diff:", "Expected", "Actual", "warning"
     )
 
-    head = combined[:5]
-    tail = combined[-10:]
+    skip_harness_patterns = (
+        "site-packages/", "/lib/python", "unittest/case.py", "_pytest/",
+        "node_modules/", "/usr/local/", "/opt/"
+    )
+
+    head = combined[:3]
+    tail = combined[-8:]
 
     high_signal = []
-    for idx, line in enumerate(combined[5:-10], start=5):
+    for idx, line in enumerate(combined[3:-8], start=3):
+        # Exclude noisy framework internal frames unless containing error keyword
+        if any(p in line for p in skip_harness_patterns) and not any(kw in line for kw in ("AssertionError", "Error", "Exception")):
+            continue
+
         stripped = line.strip()
-        if any(kw in line for kw in signal_keywords) or stripped.startswith(">") or stripped.startswith("E "):
+        if any(kw in line for kw in signal_keywords) or stripped.startswith(">") or stripped.startswith("E ") or stripped.startswith("+") or stripped.startswith("-"):
             high_signal.append(line)
-            if idx + 1 < len(combined) - 10:
+            if idx + 1 < len(combined) - 8:
                 high_signal.append(combined[idx + 1])
 
     # Deduplicate while preserving order
@@ -1064,6 +1074,16 @@ def main():
     # 4. Perform syntax probe on modified file
     if changed_file:
         file_path = Path(changed_file).expanduser()
+        suffix = file_path.suffix.lower()
+        non_code_extensions = {
+            ".txt", ".csv", ".tsv", ".log", ".tmp",
+            ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".lock",
+            ".woff", ".woff2", ".ttf", ".eot", ".mp3", ".mp4", ".pdf",
+            ".zip", ".tar", ".gz"
+        }
+        if suffix in non_code_extensions or file_path.name.startswith(".git"):
+            return
+
         if file_path.is_file():
             errors = validate_code_file(file_path)
             if errors:

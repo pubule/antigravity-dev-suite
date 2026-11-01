@@ -24,8 +24,9 @@ flowchart TD
 
 ### Pass 1: Invariants, Algorithmic Bounds & KISS/YAGNI Gate
 - **KISS/YAGNI Audit**: Did the code introduce speculative abstractions, unused parameters, or micro-frameworks?
-- **Algorithmic Bounds**: Verify time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns.
-- **Contract Adherence**: Are public function and class signatures backwards-compatible?
+- **Algorithmic Bounds**: Verify time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns via `python3 scripts/critic_loop.py --mode semantic --target .`.
+- **Targeted Symbol Inspection**: Use `python3 scripts/semantic_slice.py <file> --symbol <name>` to isolate symbols and dependencies cleanly.
+- **Contract Adherence**: Are public function and class signatures backwards-compatible? Verify with `python3 scripts/api_contract_guard.py --target .`.
 - **Edge cases**: Are boundary values (`0`, `-1`, empty collections, max size, Unicode) tested and handled?
 
 ### Pass 2: Structured Concurrency, Cancellation & Resources

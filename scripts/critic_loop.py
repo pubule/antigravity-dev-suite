@@ -270,6 +270,43 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                     logic_report["suggested_fixes"].append(
                                         "Use parameterized queries or prepared statements instead of f-strings"
                                     )
+
+                            # Quadratic traps in loops (linear searches, .index(), or unindexed collections)
+                            if check_semantic and not is_test_file and isinstance(node, (ast.For, ast.While)):
+                                for child in ast.walk(node):
+                                    if child is node:
+                                        continue
+                                    child_lineno = getattr(child, "lineno", 0)
+                                    line_txt = content.splitlines()[child_lineno - 1] if 1 <= child_lineno <= len(content.splitlines()) else ""
+                                    if "# nosec" in line_txt or "# safe-bounds" in line_txt:
+                                        continue
+
+                                    # Sequence lookup .index() inside loop
+                                    if isinstance(child, ast.Call) and isinstance(getattr(child, "func", None), ast.Attribute):
+                                        if child.func.attr == "index":
+                                            logic_report["status"] = "RETRY"
+                                            logic_report["violations"].append(
+                                                f"QuadraticTrap in {file.name}: linear sequence lookup .index() inside loop at line {child_lineno} (risks O(n^2) complexity)"
+                                            )
+                                            logic_report["suggested_fixes"].append(
+                                                "Convert sequence to dict or hash map before loop to achieve O(1) lookups"
+                                            )
+                                            break
+
+                                    # Linear membership search 'in <list>' inside loop
+                                    if isinstance(child, ast.Compare):
+                                        for op, comp in zip(child.ops, child.comparators):
+                                            if isinstance(op, (ast.In, ast.NotIn)) and isinstance(comp, ast.Name):
+                                                var_lower = comp.id.lower()
+                                                if any(var_lower.endswith(sfx) for sfx in ("_list", "_arr", "_array", "_items", "_records", "_rows")):
+                                                    logic_report["status"] = "RETRY"
+                                                    logic_report["violations"].append(
+                                                        f"QuadraticTrap in {file.name}: linear membership search 'in {comp.id}' inside loop at line {child_lineno} (risks O(n^2) complexity)"
+                                                    )
+                                                    logic_report["suggested_fixes"].append(
+                                                        f"Convert '{comp.id}' to set or dict before loop to achieve O(1) membership testing"
+                                                    )
+                                                    break
                     except Exception as ast_err:
                         logic_report["details"][f"{file.name}_ast_notice"] = str(ast_err)
 
@@ -288,6 +325,17 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                             logic_report["suggested_fixes"].append(
                                 "Await promise or handle rejection with .catch() or return statement"
                             )
+                        # Quadratic trap in JS/TS: indexOf or findIndex in loop
+                        if any(pat in line for pat in [".indexOf(", ".findIndex("]) and ("// nosec" not in line and "// safe-bounds" not in line):
+                            prev_context = "\n".join(content.splitlines()[max(0, line_idx - 6):line_idx])
+                            if any(k in prev_context for k in ["for (", ".forEach(", ".map("]):
+                                logic_report["status"] = "RETRY"
+                                logic_report["violations"].append(
+                                    f"QuadraticTrap in {file.name}: linear search inside iteration loop at line {line_idx} (risks O(n^2) complexity)"
+                                )
+                                logic_report["suggested_fixes"].append(
+                                    "Index array into Map or Set before loop for O(1) lookups"
+                                )
                         # ReDoS in JS RegExp constructor or regex literals
                         if "RegExp" in line or "= /" in line or line.startswith("/"):
                             m = REDOS_PATTERN.search(line)

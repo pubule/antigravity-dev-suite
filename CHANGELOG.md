@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.14.0] — 2026-11-01
+
+### 🚀 Highlights & Flash 3.8 Optimization for Claude Opus 5.5 Level
+- **Semantic Symbol Slicing (`scripts/semantic_slice.py`)**:
+  - Implemented AST-based and brace-delimited symbol slicer for Python, TypeScript/JavaScript, Go, and Rust.
+  - Slices specific functions, classes, or target line ranges with associated imports (`--symbol`, `--line`, `--with-imports`, `--compact`, `--json`).
+  - Eliminates context window bloat and optimizes token throughput for Gemini Flash 3.8 by avoiding full-file reads.
+- **Deterministic Static Quadratic Trap Detection ($O(n^2)$) (`scripts/critic_loop.py`)**:
+  - Added AST inspection for Python (`.index()` in loops, `item in list` linear scans) and JS/TS (`indexOf()`, `findIndex()` inside `for`, `for...of`, `while`).
+  - Identifies algorithmic inefficiencies deterministically in local tooling without subagent roundtrip latency.
+- **Context Window Hygiene & Test Output Condensation (`scripts/auto_debug_runner.py`)**:
+  - Enhanced `condense_test_output()` to strip third-party framework frames (`site-packages`, `_pytest`, `unittest/case.py`).
+  - Caps failure assertion diffs to $\le 30$ lines to maximize LLM signal-to-noise ratio.
+  - Added instant fast-path early-exit for inert non-code assets (`.txt`, `.csv`, `.log`, `.png`, etc.).
+- **Deterministic Tier-1 Audit Gate Integration**:
+  - Structured `skills/opus-dev/SKILL.md`, `agents/claude-critic.md`, and `skills/code-review/SKILL.md` to run deterministic checks (`semantic_slice.py`, `critic_loop.py`, `api_contract_guard.py`) before subagent invocation.
+
+---
+
 ## [1.13.0] — 2026-11-01
 
 ### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added

@@ -13,7 +13,8 @@ Systematically inspect the solution across the following 7 pillars:
 1. **Negative Constraints, Contract Integrity & Algorithmic Bounds**:
    - Did the implementation violate explicit or implicit constraints requested by the user?
    - Are existing public APIs and interfaces preserved backwards-compatibly? Verify with `python3 scripts/api_contract_guard.py --target .`.
-   - Is algorithmic complexity bounded ($O(1)$, $O(n)$, $O(n \log n)$)? Are $O(n^2)$ loops and ReDoS patterns eliminated?
+   - Inspect symbol boundaries and dependencies efficiently using `python3 scripts/semantic_slice.py <file> --symbol <name>`.
+   - Is algorithmic complexity bounded ($O(1)$, $O(n)$, $O(n \log n)$)? Are $O(n^2)$ loops and ReDoS patterns eliminated? Verify via `python3 scripts/critic_loop.py --mode semantic --target .`.
 
 2. **KISS & YAGNI Compliance (Anti-Overengineering)**:
    - Did the solution introduce speculative abstractions, unused parameters, or premature micro-frameworks?
