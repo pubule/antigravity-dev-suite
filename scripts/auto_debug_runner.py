@@ -1209,6 +1209,16 @@ def handle_cli_mode() -> bool:
             print(f"Error inspecting context occupancy: {e}", file=sys.stderr)
             sys.exit(1)
 
+    if first == "--statusline":
+        try:
+            import statusline
+            output = statusline.render_statusline()
+            sys.stdout.write(output + "\n")
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error rendering statusline: {e}", file=sys.stderr)
+            sys.exit(1)
+
     if first in ("--filter-stream", "--condense"):
         max_lines = 30
         idx = 1
@@ -1310,7 +1320,7 @@ if __name__ == "__main__":
         "--detect-flaky", "--flaky",
         "--run-typecheck", "--typecheck", "--run-race", "--race", "--run-fuzz", "--fuzz",
         "--install-git-hooks", "--install-hook",
-        "--handoff", "--create-handoff", "--context", "--context-stats",
+        "--handoff", "--create-handoff", "--context", "--context-stats", "--statusline",
         "--filter-stream", "--condense"
     )
     try:

@@ -3693,6 +3693,23 @@ def test_handoff_generator():
     assert code_ctx == 0, f"auto_debug_runner.py --context failed: {err_ctx}"
     assert "Context Window Occupancy:" in out_ctx
 
+    # 7. Custom Statusline Renderer Validation
+    import statusline
+    custom_line = statusline.render_statusline({
+        "model": {"display_name": "Gemini 3.8 Flash"},
+        "workspace": {"current_dir": "/mock/dir"},
+        "context_window": {
+            "remaining_percentage": 65.0,
+            "current_usage": {"input_tokens": 35000}
+        }
+    })
+    assert "Gemini 3.8 Flash" in custom_line
+    assert "35.0%" in custom_line or "dir" in custom_line
+
+    code_sl, out_sl, err_sl = run_script("auto_debug_runner.py", ["--statusline"])
+    assert code_sl == 0, f"auto_debug_runner.py --statusline failed: {err_sl}"
+    assert "[" in out_sl and "%" in out_sl
+
 import unittest
 
 class AntigravityDevSuiteTestCase(unittest.TestCase):
