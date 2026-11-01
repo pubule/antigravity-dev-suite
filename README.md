@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.10.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.11.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Flash and Pro models** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -21,10 +21,11 @@ Every skill in the suite is exposed as a first-class native slash command in Ant
 | Slash Command | Skill Module | Cognitive Phase | Key Capabilities |
 | :--- | :--- | :--- | :--- |
 | **`/opus-dev`** | `skills/opus-dev` | **Autonomous Meta-Engine** | Autonomous closed-loop engineering (*Design & Invariants $\to$ Plan $\to$ TDD & Properties $\to$ Auto-Debug & Benchmark $\to$ Adversarial Critic Loop until `PASS`*). |
-| **`/brainstorm`**| `skills/brainstorm`| **Ideation & Architecture** | Explores **2-3 architectural approaches**, evaluates KISS/YAGNI trade-off matrix, defines algorithmic bounds ($O(n)$) and negative constraints. |
-| **`/plan`** | `skills/plan` | **Milestone Decomposition** | Breaks down tasks into atomic Red-Green steps (1-2 files per task) with explicit TDD, typestate, and invariant targets. |
-| **`/auto-debug`**| `skills/auto-debug` | **Closed-Loop Auto-Fix** | Auto-detects 10+ test & benchmark frameworks, parses stacktraces at AST level, auto-fixes up to 3 cycles. |
-| **`/code-review`**|`skills/code-review`| **Adversarial Audit** | **5-Pass Inspection**: Algorithmic & Typestate Invariants, Concurrency & Leaks, OWASP Top 10 Security, Strict Typing, Performance Gate. |
+| **`/brainstorm`**| `skills/brainstorm`| **Ideation & Architecture** | Explores **2-3 architectural approaches**, evaluates KISS/YAGNI trade-off matrix, defines algorithmic bounds ($O(n)$) and formal inductive invariants ($P, I, V, Q$). |
+| **`/plan`** | `skills/plan` | **Milestone Decomposition** | Breaks down tasks into atomic Red-Green steps with explicit TDD targets, typestate transitions, and formal inductive invariants. |
+| **`/auto-debug`**| `skills/auto-debug` | **Closed-Loop Auto-Fix** | Auto-detects 10+ test, coverage & mutation frameworks, parses stacktraces at AST level, auto-fixes up to 3 cycles. |
+| **`/code-review`**|`skills/code-review`| **Adversarial Audit** | **5-Pass Inspection**: Invariants & Bounds, Concurrency & Leaks, OWASP Top 10 Security, Typestate & Strict Types, Property Fuzzing & Mutation Gate. |
+| **`/commit`** | `skills/commit` | **Pre-Commit Verification** | 4-Phase pre-commit pipeline executing secret scans, static audits, test validation, and Conventional Commits formatting. |
 | **`/benchmark`** | `skills/benchmark` | **Performance & Hotspots** | 4-Phase microbenchmark & profiling harness (Ecosystem detection, Hotspots $O(n^2)$, Memory leaks, >5% regression threshold). |
 | **`/refactor`** | `skills/refactor` | **Tech Debt Remediation** | Safe refactoring & KISS simplification with baseline verification, preserving 100% green tests and public APIs. |
 | **`/visual-qa`** | `skills/visual-qa` | **Multimodal UI Inspector** | Dual-viewport Playwright screenshots (**Desktop 1280x800 + Mobile 375x667 iPhone SE**). |
@@ -70,8 +71,8 @@ flowchart TD
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.10.0)
-├── hooks.json                  # Root PostToolUse hook configuration (Universal dispatch)
+├── plugin.json                 # Standard AGY plugin manifest (v1.11.0)
+├── hooks.json                  # Root PreToolUse & PostToolUse hook configuration
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown)
 │   ├── opus-architect.md       # System design & scalability architect
@@ -84,7 +85,11 @@ antigravity-dev-suite/
 │   ├── brainstorm/SKILL.md     # /brainstorm: Architectural trade-off analysis
 │   ├── plan/SKILL.md           # /plan: Atomic milestone & TDD planning
 │   ├── auto-debug/SKILL.md     # /auto-debug: Multi-ecosystem closed-loop auto-debugger
-│   ├── code-review/SKILL.md    # /code-review: 5-Pass adversarial security, invariants & typing gate
+│   ├── code-review/            # /code-review: 5-Pass adversarial security, invariants & typing gate
+│   │   ├── SKILL.md            # Multi-pass code review workflow
+│   │   └── references/         # Modular pattern reference catalog
+│   │       └── patterns.md     # Typestate, Branded Types, Structured Concurrency & Property Testing
+│   ├── commit/SKILL.md         # /commit: Pre-commit verification pipeline & Conventional Commits
 │   ├── benchmark/SKILL.md      # /benchmark: Microbenchmark & latency profiling harness
 │   ├── refactor/SKILL.md       # /refactor: Safe tech debt remediation with invariants
 │   ├── visual-qa/SKILL.md      # /visual-qa: Dual-viewport Playwright visual QA skill
@@ -97,8 +102,9 @@ antigravity-dev-suite/
 │           └── supply-chain.md # Dependency auditing, lockfile integrity, typosquatting
 ├── scripts/                    # Runtime runner scripts (Pure Python / Cross-Platform)
 │   ├── validator_core.py       # Core AST, regex, JSONC, polyglot raw strings, and delimiter parser
-│   ├── auto_debug_runner.py    # Universal PostToolUse hook processor & syntax validator
+│   ├── auto_debug_runner.py    # Universal PostToolUse hook processor, test, coverage & mutation runner
 │   ├── auto_debug_runner.sh    # Resilient Unix wrapper for auto-debug hook execution
+│   ├── pre_tool_guard.py       # PreToolUse safety guardrail (Blocks catastrophic commands & leaks)
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
 │   ├── visual_qa.py            # Playwright dual-viewport screenshot engine (Platform-adaptive)
 │   ├── run_audit_loop.sh       # Multi-pass autonomous audit loop runner (Unix)
@@ -106,7 +112,7 @@ antigravity-dev-suite/
 │   ├── clean_legacy_plugins.sh # Conflicting plugins cleaner (macOS & Linux)
 │   └── clean_legacy_plugins.ps1# Conflicting plugins cleaner (Windows PowerShell)
 ├── tests/                      # Automated Verification & TDD Suite
-│   └── test_plugin_suite.py    # Full unit and integration test suite (105 automated checks)
+│   └── test_plugin_suite.py    # Full unit and integration test suite (110 automated checks)
 ├── templates/                  # Zero-setup per-repository template
 │   └── project-git-template/   # .agents/ & GEMINI.md template for team sharing
 ├── install.sh                  # 1-Click installer for macOS & Linux

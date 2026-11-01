@@ -41,6 +41,11 @@ SECRET_PATTERNS = [
 
 REDOS_PATTERN = re.compile(r'\([^\)]*(?<!\\\\)[\+\*][^\)]*\)(?<!\\\\)[\+\*]|\([^\)\\]*[\+\*]\)\{[0-9]+,\}')
 UNPROTECTED_FETCH = re.compile(r'^\s*fetch\s*\(')
+UNSAFE_EVAL_JS = re.compile(r'\b(eval|new\s+Function)\s*\(')
+UNSAFE_INNER_HTML = re.compile(r'(?:\.innerHTML\s*=\s*(?!DOMPurify\.sanitize)|dangerouslySetInnerHTML\s*=\s*\{\s*\{\s*__html:\s*(?!DOMPurify\.sanitize))')
+GO_UNHANDLED_PANIC = re.compile(r'\bpanic\s*\(')
+RUST_UNWRAP_EXPECT = re.compile(r'\.(unwrap|expect)\s*\(')
+SQL_KEYWORDS_PATTERN = re.compile(r'(?i)\b(SELECT\s+[\*\w\s,]+?\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b')
 
 def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all") -> dict:
     """Audits code syntax, structural integrity, OWASP security, and hygiene defect patterns."""
@@ -136,9 +141,17 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
 
                 # 2. Defensive Engineering & Semantic AST in Python
                 if file.suffix in [".py", ".pyi"]:
+                    is_test_file = file.name.startswith("test_") or file.name.endswith("_test.py") or "/tests/" in str(file) or "\\tests\\" in str(file)
+                    content_lines = content.splitlines()
                     try:
                         tree = ast.parse(content, filename=str(file))
                         for node in ast.walk(tree):
+                            lineno = getattr(node, "lineno", 0)
+                            start_line = max(0, lineno - 1)
+                            end_line = max(0, getattr(node, "end_lineno", lineno))
+                            node_text = "\n".join(content_lines[start_line:end_line])
+                            has_nosec = "# nosec" in node_text or "# safe-shell" in node_text
+
                             # Empty exception handling
                             if check_security and isinstance(node, ast.ExceptHandler):
                                 if len(node.body) == 1:
@@ -152,7 +165,7 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                     if is_pass or is_ellipsis:
                                         logic_report["status"] = "RETRY"
                                         action_word = "pass" if is_pass else "..."
-                                        logic_report["violations"].append(f"EmptyExceptionHandling in {file.name}: empty 'except' block with {action_word} at line {node.lineno}")
+                                        logic_report["violations"].append(f"EmptyExceptionHandling in {file.name}: empty 'except' block with {action_word} at line {lineno}")
                                         logic_report["suggested_fixes"].append("Handle exception or log with contextual details")
 
                             # Mutable default arguments (def fn(x=[]))
@@ -162,7 +175,7 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                     if isinstance(d, (ast.List, ast.Dict, ast.Set)):
                                         logic_report["status"] = "RETRY"
                                         logic_report["violations"].append(
-                                            f"MutableDefaultArgument in {file.name}: function '{node.name}' defines mutable default argument at line {node.lineno}"
+                                            f"MutableDefaultArgument in {file.name}: function '{node.name}' defines mutable default argument at line {lineno}"
                                         )
                                         logic_report["suggested_fixes"].append(
                                             f"Use None as default in '{node.name}' and initialize collection dynamically inside body"
@@ -184,11 +197,69 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                         if m:
                                             logic_report["status"] = "RETRY"
                                             logic_report["violations"].append(
-                                                f"ReDoSRisk in {file.name}: regex contains nested quantifiers '{m.group(0)}' with catastrophic backtracking risk at line {node.lineno}"
+                                                f"ReDoSRisk in {file.name}: regex contains nested quantifiers '{m.group(0)}' with catastrophic backtracking risk at line {lineno}"
                                             )
                                             logic_report["suggested_fixes"].append(
                                                 "Refactor regex to eliminate nested quantifiers and prevent catastrophic backtracking"
                                             )
+
+                                # Command injection via subprocess shell=True
+                                if not is_test_file and not has_nosec:
+                                    is_shell_true = False
+                                    for kw in node.keywords:
+                                        if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                                            is_shell_true = True
+                                            break
+                                    if is_shell_true and node.args:
+                                        first_arg = node.args[0]
+                                        if not (isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str)):
+                                            logic_report["status"] = "RETRY"
+                                            logic_report["violations"].append(
+                                                f"CommandInjectionRisk in {file.name}: subprocess call with shell=True and dynamic arguments at line {lineno}"
+                                            )
+                                            logic_report["suggested_fixes"].append(
+                                                "Pass arguments as a list without shell=True to prevent command injection"
+                                            )
+
+                                # Insecure deserialization (pickle)
+                                if not is_test_file and not has_nosec:
+                                    if isinstance(func, ast.Attribute) and func.attr in ("load", "loads"):
+                                        if isinstance(func.value, ast.Name) and func.value.id == "pickle":
+                                            logic_report["status"] = "RETRY"
+                                            logic_report["violations"].append(
+                                                f"InsecureDeserialization in {file.name}: unsafe pickle.{func.attr}() at line {lineno}"
+                                            )
+                                            logic_report["suggested_fixes"].append(
+                                                "Use secure serialization formats (JSON, Protobuf, or SafeLoader)"
+                                            )
+
+                                # Dangerous dynamic eval/exec
+                                if not is_test_file and not has_nosec:
+                                    if isinstance(func, ast.Name) and func.id in ("eval", "exec"):
+                                        logic_report["status"] = "RETRY"
+                                        logic_report["violations"].append(
+                                            f"DangerousEval in {file.name}: dynamic invocation of {func.id}() at line {lineno}"
+                                        )
+                                        logic_report["suggested_fixes"].append(
+                                            f"Replace {func.id}() with explicit AST parsing or structured data parsing"
+                                        )
+
+                            # SQL injection in f-strings
+                            if check_semantic and not is_test_file and isinstance(node, ast.JoinedStr):
+                                has_sql_kw = False
+                                for part in node.values:
+                                    if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                                        if SQL_KEYWORDS_PATTERN.search(part.value):
+                                            has_sql_kw = True
+                                            break
+                                if has_sql_kw and any(isinstance(part, ast.FormattedValue) for part in node.values):
+                                    logic_report["status"] = "RETRY"
+                                    logic_report["violations"].append(
+                                        f"SQLInjectionRisk in {file.name}: dynamic string interpolation in SQL statement at line {lineno}"
+                                    )
+                                    logic_report["suggested_fixes"].append(
+                                        "Use parameterized queries or prepared statements instead of f-strings"
+                                    )
                     except Exception as ast_err:
                         logic_report["details"][f"{file.name}_ast_notice"] = str(ast_err)
 
@@ -196,8 +267,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                 if check_semantic and file.suffix in [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]:
                     for line_idx, line in enumerate(content.splitlines(), start=1):
                         stripped = line.strip()
+                        if stripped.startswith("//") or stripped.startswith("/*"):
+                            continue
                         # Unawaited fetch call
-                        if UNPROTECTED_FETCH.search(line) and not stripped.startswith("//") and not stripped.startswith("/*"):
+                        if UNPROTECTED_FETCH.search(line):
                             logic_report["status"] = "RETRY"
                             logic_report["violations"].append(
                                 f"UnawaitedPromise in {file.name}: floating fetch() call without await, return, or void at line {line_idx}"
@@ -206,7 +279,7 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                 "Await promise or handle rejection with .catch() or return statement"
                             )
                         # ReDoS in JS RegExp constructor or regex literals
-                        if ("RegExp" in line or "= /" in line or line.startswith("/")) and not stripped.startswith("//"):
+                        if "RegExp" in line or "= /" in line or line.startswith("/"):
                             m = REDOS_PATTERN.search(line)
                             if m:
                                 logic_report["status"] = "RETRY"
@@ -216,6 +289,55 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                 logic_report["suggested_fixes"].append(
                                     "Refactor regex to eliminate nested quantifiers and prevent catastrophic backtracking"
                                 )
+                        # Dangerous dynamic code evaluation
+                        if UNSAFE_EVAL_JS.search(line):
+                            logic_report["status"] = "RETRY"
+                            logic_report["violations"].append(
+                                f"DangerousEval in {file.name}: dynamic code execution via eval/Function at line {line_idx}"
+                            )
+                            logic_report["suggested_fixes"].append(
+                                "Avoid dynamic code execution; use structured JSON or explicit handlers"
+                            )
+                        # XSS risk via innerHTML
+                        if UNSAFE_INNER_HTML.search(line):
+                            logic_report["status"] = "RETRY"
+                            logic_report["violations"].append(
+                                f"XSSRisk in {file.name}: unsanitized innerHTML or dangerouslySetInnerHTML at line {line_idx}"
+                            )
+                            logic_report["suggested_fixes"].append(
+                                "Sanitize HTML using DOMPurify.sanitize() before assigning to DOM"
+                            )
+
+                # 4. Go Production Panic Checks
+                if check_semantic and file.suffix == ".go" and not file.name.endswith("_test.go"):
+                    for line_idx, line in enumerate(content.splitlines(), start=1):
+                        stripped = line.strip()
+                        if stripped.startswith("//") or stripped.startswith("/*"):
+                            continue
+                        if GO_UNHANDLED_PANIC.search(line):
+                            logic_report["status"] = "RETRY"
+                            logic_report["violations"].append(
+                                f"UnhandledPanic in {file.name}: unhandled panic() in production Go code at line {line_idx}"
+                            )
+                            logic_report["suggested_fixes"].append(
+                                "Return an error (error value) instead of panicking in production code"
+                            )
+
+                # 5. Rust Production Unwrap/Expect Checks
+                if check_semantic and file.suffix == ".rs" and "test" not in str(file).lower():
+                    for line_idx, line in enumerate(content.splitlines(), start=1):
+                        stripped = line.strip()
+                        if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("#["):
+                            continue
+                        m = RUST_UNWRAP_EXPECT.search(line)
+                        if m:
+                            logic_report["status"] = "RETRY"
+                            logic_report["violations"].append(
+                                f"ProductionPanicRisk in {file.name}: .{m.group(1)}() in production Rust code at line {line_idx}"
+                            )
+                            logic_report["suggested_fixes"].append(
+                                f"Handle Result/Option using ?, match, or unwrap_or instead of .{m.group(1)}()"
+                            )
             except Exception as read_err:
                 logic_report["details"][f"{file.name}_read_notice"] = str(read_err)
 

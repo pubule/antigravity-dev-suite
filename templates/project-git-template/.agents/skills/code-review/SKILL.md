@@ -89,3 +89,10 @@ python3 scripts/critic_loop.py --mode security --target .
 # Run syntax and bracket balance scan only
 python3 scripts/critic_loop.py --mode syntax --target .
 ```
+
+---
+
+## 📚 Pattern Catalog Reference
+
+For concrete implementation patterns across TypeScript, Python, Rust, and Go, refer to:
+- [patterns.md](references/patterns.md)

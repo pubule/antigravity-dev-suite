@@ -19,8 +19,8 @@ When invoked with a feature request, design problem, or refactoring challenge:
    - Evaluate algorithmic time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Prevent $O(n^2)$ loops and ReDoS risks.
    - Enforce Typestate patterns for domain state lifecycles and Branded Types for identifiers.
 
-3. **Invariants, Domain Isolation & Structured Concurrency**:
-   - Identify existing public contracts and interfaces that must remain backwards-compatible.
+3. **Invariants, Domain Isolation, API Contracts & Concurrency**:
+   - Preserve existing public API contracts: enforce additive changes only; forbid breaking signature renames or deletions.
    - Enforce strict Domain-Driven Design boundaries: core business logic must remain decoupled from infrastructure.
    - Design asynchronous workflows with Structured Concurrency and deterministic cancellation propagation.
 

@@ -20,4 +20,5 @@ This repository follows the **Antigravity Dev Suite** engineering standards:
 - `/security-audit`: Cloudflare-inspired vulnerability harness (Hunter vs. Verifier, attack surfaces, findings.json, supply chain).
 - `/benchmark`: Performance profiling, latency regression detection, and N+1 query audit.
 - `/refactor`: Safe tech debt reduction preserving invariants and 100% green tests.
+- `/commit`: Pre-commit verification pipeline with secret scans and Conventional Commits.
 - `/visual-qa`: Dual-viewport Playwright visual inspector.

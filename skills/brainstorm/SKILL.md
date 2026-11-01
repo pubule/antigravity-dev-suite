@@ -43,6 +43,7 @@ Provide a concise decision matrix with explicit **KISS/YAGNI scoring**:
 
 ### Step 4: Recommended Decision & Pre-Code Invariants
 - State the winning recommendation with clear KISS/YAGNI justification.
+- Define formal invariants ($P$: Preconditions, $I$: Loop Invariants, $V$: Variants/Termination, $Q$: Postconditions) where iterative state manipulation is involved.
 - Define the **Negative Constraints Checklist**:
   - [ ] Must NOT introduce speculative abstractions or unused generic parameters.
   - [ ] Must NOT modify existing public interface X.

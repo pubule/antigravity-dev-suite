@@ -31,7 +31,7 @@ def test_manifests():
     with open(PLUGIN_ROOT / "plugin.json", "r", encoding="utf-8") as f:
         data = json.load(f)
         assert data.get("name") == "antigravity-dev-suite"
-        assert data.get("version") == "1.10.0"
+        assert data.get("version") == "1.11.0"
 
     # 2. hooks.json
     with open(PLUGIN_ROOT / "hooks.json", "r", encoding="utf-8") as f:
@@ -2569,6 +2569,206 @@ def test_benchmark_skill_and_cli():
     assert "status" in data
     assert "benchmark_command" in data or "command" in data
 
+def test_critic_loop_extended_ast_and_polyglot_checks():
+    import critic_loop
+
+    # 1. Python CommandInjectionRisk
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write("import subprocess\ndef run(user_cmd):\n    subprocess.run(user_cmd, shell=True)\n")
+        bad_shell_py = f.name
+    # Safe bypass
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write("import subprocess\ndef run(user_cmd):\n    subprocess.run(user_cmd, shell=True)  # nosec: safe-shell\n")
+        safe_shell_py = f.name
+
+    # 2. Python InsecureDeserialization
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write("import pickle\ndef load(data):\n    return pickle.loads(data)\n")
+        bad_pickle_py = f.name
+
+    # 3. Python DangerousEval
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write("def calculate(expr):\n    return eval(expr)\n")
+        bad_eval_py = f.name
+
+    # 4. Python SQLInjectionRisk in f-string
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False) as f:
+        f.write('def query_user(name):\n    sql = f"SELECT * FROM users WHERE name = \'{name}\'"\n    return sql\n')
+        bad_sql_py = f.name
+
+    # 5. Rust unwrap/expect in non-test file
+    with tempfile.NamedTemporaryFile(suffix=".rs", mode="w", delete=False) as f:
+        f.write('fn process(opt: Option<i32>) -> i32 {\n    opt.unwrap()\n}\n')
+        bad_rust = f.name
+
+    # 6. Go panic in non-test file
+    with tempfile.NamedTemporaryFile(suffix=".go", mode="w", delete=False) as f:
+        f.write('package main\nfunc check(err error) {\n    if err != nil {\n        panic(err)\n    }\n}\n')
+        bad_go = f.name
+
+    # 7. JS eval and innerHTML
+    with tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False) as f:
+        f.write('function render(userStr) {\n    eval(userStr);\n    document.getElementById("box").innerHTML = userStr;\n}\n')
+        bad_js = f.name
+
+    try:
+        # Check Python shell injection
+        res = critic_loop.audit_code_logic(bad_shell_py, submode="semantic")
+        assert res["status"] == "RETRY"
+        assert any("CommandInjectionRisk" in v for v in res["violations"])
+
+        # Check Python safe-shell bypass
+        res_safe = critic_loop.audit_code_logic(safe_shell_py, submode="semantic")
+        assert not any("CommandInjectionRisk" in v for v in res_safe.get("violations", []))
+
+        # Check Python pickle
+        res = critic_loop.audit_code_logic(bad_pickle_py, submode="semantic")
+        assert res["status"] == "RETRY"
+        assert any("InsecureDeserialization" in v for v in res["violations"])
+
+        # Check Python eval
+        res = critic_loop.audit_code_logic(bad_eval_py, submode="semantic")
+        assert res["status"] == "RETRY"
+        assert any("DangerousEval" in v for v in res["violations"])
+
+        # Check Python SQL injection
+        res = critic_loop.audit_code_logic(bad_sql_py, submode="semantic")
+        assert res["status"] == "RETRY"
+        assert any("SQLInjectionRisk" in v for v in res["violations"])
+
+        # Check Rust panic
+        res = critic_loop.audit_code_logic(bad_rust, submode="semantic")
+        assert res["status"] == "RETRY"
+        assert any("ProductionPanicRisk" in v for v in res["violations"])
+
+        # Check Go unhandled panic
+        res = critic_loop.audit_code_logic(bad_go, submode="semantic")
+        assert res["status"] == "RETRY"
+        assert any("UnhandledPanic" in v for v in res["violations"])
+
+        # Check JS eval and innerHTML
+        res = critic_loop.audit_code_logic(bad_js, submode="semantic")
+        assert res["status"] == "RETRY"
+        assert any("DangerousEval" in v for v in res["violations"])
+        assert any("XSSRisk" in v for v in res["violations"])
+    finally:
+        for p in (bad_shell_py, safe_shell_py, bad_pickle_py, bad_eval_py, bad_sql_py, bad_rust, bad_go, bad_js):
+            if os.path.exists(p):
+                os.remove(p)
+
+def test_auto_debug_runner_coverage_and_mutation():
+    from auto_debug_runner import detect_project_framework
+
+    # Framework detection returns coverage and mutation commands
+    info = detect_project_framework(PLUGIN_ROOT)
+    assert "coverage_command" in info
+    assert "mutation_command" in info
+
+    # CLI test for --coverage
+    code, stdout, _ = run_script("auto_debug_runner.py", ["--coverage", str(PLUGIN_ROOT)])
+    data = json.loads(stdout)
+    assert "status" in data
+    assert "coverage_command" in data or "command" in data
+
+    # CLI test for --mutation
+    code, stdout, _ = run_script("auto_debug_runner.py", ["--mutation", str(PLUGIN_ROOT)])
+    data = json.loads(stdout)
+    assert "status" in data
+    assert "mutation_command" in data or "command" in data
+
+def test_pre_tool_guard_safety_rules():
+    # 1. Catastrophic command block
+    code, stdout, _ = run_script("pre_tool_guard.py", ["--check-cmd", "rm -rf /"])
+    assert code == 1
+    data = json.loads(stdout)
+    assert data["decision"] == "deny"
+    assert "Root or home" in data["reason"]
+
+    code, stdout, _ = run_script("pre_tool_guard.py", ["--check-cmd", "rm -rf .git"])
+    assert code == 1
+    data = json.loads(stdout)
+    assert data["decision"] == "deny"
+    assert "Git repository" in data["reason"]
+
+    code, stdout, _ = run_script("pre_tool_guard.py", ["--check-cmd", "git push --force origin main"])
+    assert code == 1
+    data = json.loads(stdout)
+    assert data["decision"] == "deny"
+
+    # 2. Safe command allow
+    code, stdout, _ = run_script("pre_tool_guard.py", ["--check-cmd", "git status"])
+    assert code == 0
+    data = json.loads(stdout)
+    assert data["decision"] == "allow"
+
+    # 3. Secret blocking
+    priv_key = "-----BEGIN " + "RSA PRIVATE KEY-----\nMIIE..."
+    code, stdout, _ = run_script("pre_tool_guard.py", ["--check-content", priv_key])
+    assert code == 1
+    data = json.loads(stdout)
+    assert data["decision"] == "deny"
+    assert "private key" in data["reason"].lower()
+
+    # 4. Protected path blocking
+    code, stdout, _ = run_script("pre_tool_guard.py", ["--check-path", "/project/.git/config"])
+    assert code == 1
+    data = json.loads(stdout)
+    assert data["decision"] == "deny"
+
+    # 5. Stdin JSON payload verification
+    payload = json.dumps({"toolCall": {"name": "run_command", "args": {"CommandLine": "rm -rf /"}}})
+    code, stdout, _ = run_script("pre_tool_guard.py", [], input_data=payload)
+    assert code == 0
+    data = json.loads(stdout)
+    assert data["decision"] == "deny"
+
+def test_pattern_catalog_and_formal_invariants():
+    # 1. Pattern catalog
+    pat_file = PLUGIN_ROOT / "skills" / "code-review" / "references" / "patterns.md"
+    assert pat_file.exists(), f"Missing {pat_file}"
+    text = pat_file.read_text(encoding="utf-8")
+    assert "Typestate Pattern" in text
+    assert "Branded Nominal Types" in text
+    assert "Structured Concurrency" in text
+    assert "Property-Based Testing" in text
+
+    # 2. Formal loop invariant schema in plan & brainstorm skills
+    plan_skill = (PLUGIN_ROOT / "skills" / "plan" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Formal Inductive Invariant Specification" in plan_skill
+    assert "Precondition" in plan_skill
+    assert "Loop Invariant" in plan_skill
+    assert "Loop Variant" in plan_skill
+    assert "Postcondition" in plan_skill
+
+    brainstorm_skill = (PLUGIN_ROOT / "skills" / "brainstorm" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Loop Invariants" in brainstorm_skill
+
+    # 3. Public API contract preservation in rules and architect
+    agents_rule = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Public API Contract Preservation" in agents_rule
+    assert "Contract-First Stability" in agents_rule
+
+    architect_agent = (PLUGIN_ROOT / "agents" / "opus-architect.md").read_text(encoding="utf-8")
+    assert "API Contracts" in architect_agent
+
+def test_commit_skill_and_v11_plugin_manifest():
+    # 1. Commit skill
+    commit_skill = PLUGIN_ROOT / "skills" / "commit" / "SKILL.md"
+    assert commit_skill.exists()
+    text = commit_skill.read_text(encoding="utf-8")
+    assert "name: commit" in text
+    assert "Pre-Commit Verification Pipeline" in text
+    assert "Conventional Commits" in text
+
+    # 2. Plugin manifest
+    manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
+    assert manifest["version"] == "1.11.0"
+    assert any("/commit" in p for p in manifest["suggestedPrompts"])
+
+    # 3. Project template GEMINI.md
+    gemini_md = (PLUGIN_ROOT / "templates" / "project-git-template" / "GEMINI.md").read_text(encoding="utf-8")
+    assert "/commit" in gemini_md
+
 import unittest
 
 class AntigravityDevSuiteTestCase(unittest.TestCase):
@@ -2797,4 +2997,14 @@ if __name__ == "__main__":
     print("✔ Critic loop semantic ReDoS and unawaited promises passed")
     test_benchmark_skill_and_cli()
     print("✔ Benchmark skill and CLI runner passed")
+    test_critic_loop_extended_ast_and_polyglot_checks()
+    print("✔ Critic loop extended AST and polyglot checks passed")
+    test_auto_debug_runner_coverage_and_mutation()
+    print("✔ Auto debug runner coverage and mutation passed")
+    test_pre_tool_guard_safety_rules()
+    print("✔ Pre-tool guard safety rules passed")
+    test_pattern_catalog_and_formal_invariants()
+    print("✔ Pattern catalog and formal invariants passed")
+    test_commit_skill_and_v11_plugin_manifest()
+    print("✔ Commit skill and v1.11.0 plugin manifest passed")
     print("\n🎉 ALL TESTS PASSED (100% GREEN)")

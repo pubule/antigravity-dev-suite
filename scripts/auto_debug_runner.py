@@ -68,6 +68,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "cargo test",
             "lint_command": "cargo clippy --all-targets",
             "benchmark_command": "cargo bench",
+            "coverage_command": "cargo tarpaulin --out Stdout || cargo test",
+            "mutation_command": "cargo mutants",
             "markers": ["Cargo.toml"]
         }
 
@@ -79,6 +81,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "go test -v ./...",
             "lint_command": "go vet ./... && staticcheck ./...",
             "benchmark_command": "go test -bench=. -benchmem ./...",
+            "coverage_command": "go test -v -cover ./...",
+            "mutation_command": "go-mutesting ./...",
             "markers": ["go.mod"]
         }
 
@@ -90,6 +94,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "uv run pytest",
             "lint_command": "uv run ruff check . && uv run mypy .",
             "benchmark_command": "uv run pytest -v --benchmark-only",
+            "coverage_command": "uv run pytest -v --cov=. --cov-report=term-missing",
+            "mutation_command": "uv run mutmut run",
             "markers": ["uv.lock"]
         }
     if (ws / "poetry.lock").is_file():
@@ -99,6 +105,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "poetry run pytest",
             "lint_command": "poetry run mypy .",
             "benchmark_command": "poetry run pytest -v --benchmark-only",
+            "coverage_command": "poetry run pytest -v --cov=. --cov-report=term-missing",
+            "mutation_command": "poetry run mutmut run",
             "markers": ["poetry.lock"]
         }
     py_markers = [m for m in ("pytest.ini", "pyproject.toml", "setup.cfg") if (ws / m).is_file()]
@@ -111,6 +119,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "pytest -v",
             "lint_command": "ruff check . && mypy .",
             "benchmark_command": "pytest -v --benchmark-only",
+            "coverage_command": "pytest -v --cov=. --cov-report=term-missing",
+            "mutation_command": "mutmut run",
             "markers": py_markers
         }
 
@@ -123,6 +133,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "npx vitest run",
             "lint_command": "npx tsc --noEmit && npx eslint .",
             "benchmark_command": "npx vitest bench",
+            "coverage_command": "npx vitest run --coverage",
+            "mutation_command": "npx stryker run",
             "markers": ["vite.config.ts"] if (ws / "vite.config.ts").is_file() else ["vitest.config.ts"]
         }
     if (ws / "bun.lockb").is_file() or (ws / "bunfig.toml").is_file():
@@ -132,6 +144,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "bun test",
             "lint_command": "bunx tsc --noEmit && bunx eslint .",
             "benchmark_command": "bun test --bench",
+            "coverage_command": "bun test --coverage",
+            "mutation_command": "bunx stryker run",
             "markers": ["bun.lockb"] if (ws / "bun.lockb").is_file() else ["bunfig.toml"]
         }
     if (ws / "deno.json").is_file() or (ws / "deno.jsonc").is_file():
@@ -141,6 +155,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "deno test",
             "lint_command": "deno lint && deno check",
             "benchmark_command": "deno bench",
+            "coverage_command": "deno test --coverage",
+            "mutation_command": "deno test",
             "markers": ["deno.json"] if (ws / "deno.json").is_file() else ["deno.jsonc"]
         }
     if (ws / "pnpm-lock.yaml").is_file():
@@ -150,6 +166,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "pnpm test",
             "lint_command": "pnpm run typecheck",
             "benchmark_command": "pnpm run bench",
+            "coverage_command": "pnpm test -- --coverage",
+            "mutation_command": "pnpm exec stryker run",
             "markers": ["pnpm-lock.yaml"]
         }
     if has_pkg:
@@ -159,6 +177,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "npm test",
             "lint_command": "npx tsc --noEmit",
             "benchmark_command": "npm run bench",
+            "coverage_command": "npm test -- --coverage",
+            "mutation_command": "npx stryker run",
             "markers": ["package.json"]
         }
 
@@ -171,6 +191,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "dotnet test",
             "lint_command": "dotnet build",
             "benchmark_command": "dotnet test -c Release --filter *Benchmark*",
+            "coverage_command": "dotnet test --collect:\"XPlat Code Coverage\"",
+            "mutation_command": "dotnet stryker",
             "markers": [cs_files[0].name]
         }
 
@@ -182,6 +204,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "mvn test",
             "lint_command": "mvn compile",
             "benchmark_command": "mvn test-compile exec:java -Dexec.classpathScope=test",
+            "coverage_command": "mvn test jacoco:report",
+            "mutation_command": "mvn org.pitest:pitest-maven:mutationCoverage",
             "markers": ["pom.xml"]
         }
     if (ws / "build.gradle").is_file() or (ws / "build.gradle.kts").is_file():
@@ -191,6 +215,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "./gradlew test",
             "lint_command": "./gradlew check",
             "benchmark_command": "./gradlew jmh",
+            "coverage_command": "./gradlew test jacocoTestReport",
+            "mutation_command": "./gradlew pitest",
             "markers": ["build.gradle"]
         }
 
@@ -202,6 +228,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "ctest --output-on-failure",
             "lint_command": "cmake --build build",
             "benchmark_command": "ctest -R bench",
+            "coverage_command": "ctest -T coverage",
+            "mutation_command": "dextool mutate",
             "markers": ["CMakeLists.txt"]
         }
 
@@ -213,6 +241,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "bundle exec rspec",
             "lint_command": "bundle exec rubocop",
             "benchmark_command": "bundle exec rake bench",
+            "coverage_command": "COVERAGE=true bundle exec rspec",
+            "mutation_command": "bundle exec mutant --include lib --require my_app --use rspec '::MyApp*'",
             "markers": ["Gemfile"]
         }
 
@@ -224,6 +254,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "vendor/bin/phpunit",
             "lint_command": "vendor/bin/phpstan analyse",
             "benchmark_command": "vendor/bin/phpbench run",
+            "coverage_command": "vendor/bin/phpunit --coverage-text",
+            "mutation_command": "vendor/bin/infection",
             "markers": ["composer.json"] if (ws / "composer.json").is_file() else ["phpunit.xml"]
         }
 
@@ -235,6 +267,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
             "test_command": "swift test",
             "lint_command": "swift build",
             "benchmark_command": "swift test -c release",
+            "coverage_command": "swift test --enable-code-coverage",
+            "mutation_command": "swift test",
             "markers": ["Package.swift"]
         }
 
@@ -244,6 +278,8 @@ def detect_project_framework(workspace_dir: str | Path | None = None) -> dict:
         "test_command": "npm test || pytest || cargo test || go test",
         "lint_command": "",
         "benchmark_command": "npm run bench || cargo bench || go test -bench=.",
+        "coverage_command": "npm test -- --coverage || pytest --cov=. || go test -cover ./...",
+        "mutation_command": "npx stryker run || mutmut run || cargo mutants",
         "markers": []
     }
 
@@ -259,7 +295,7 @@ def run_project_tests(workspace_dir: str | Path | None = None, command_override:
     try:
         res = subprocess.run(
             cmd,
-            shell=True,
+            shell=True,  # nosec: runner-shell
             cwd=str(ws),
             capture_output=True,
             text=True,
@@ -314,7 +350,7 @@ def run_project_benchmarks(workspace_dir: str | Path | None = None, command_over
     try:
         res = subprocess.run(
             cmd,
-            shell=True,
+            shell=True,  # nosec: runner-shell
             cwd=str(ws),
             capture_output=True,
             text=True,
@@ -337,6 +373,116 @@ def run_project_benchmarks(workspace_dir: str | Path | None = None, command_over
             "duration_seconds": round(time.time() - t0, 3),
             "stdout": "",
             "stderr": f"Benchmark execution timed out after 180s: {cmd}"
+        }
+    except Exception as e:
+        return {
+            "status": "ERROR",
+            "command": cmd,
+            "returncode": -1,
+            "duration_seconds": round(time.time() - t0, 3),
+            "stdout": "",
+            "stderr": str(e)
+        }
+
+def run_project_coverage(workspace_dir: str | Path | None = None, command_override: str = "") -> dict:
+    """Executes detected or specified test coverage command and captures output."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    cmd = command_override
+    if not cmd:
+        det = detect_project_framework(ws)
+        cmd = det.get("coverage_command", "")
+    if not cmd:
+        return {
+            "status": "UNSUPPORTED",
+            "command": "",
+            "returncode": -1,
+            "duration_seconds": 0.0,
+            "stdout": "",
+            "stderr": "No coverage command detected for workspace"
+        }
+
+    t0 = time.time()
+    try:
+        res = subprocess.run(
+            cmd,
+            shell=True,  # nosec: runner-shell
+            cwd=str(ws),
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+        duration = round(time.time() - t0, 3)
+        return {
+            "status": "PASS" if res.returncode == 0 else "FAIL",
+            "command": cmd,
+            "returncode": res.returncode,
+            "duration_seconds": duration,
+            "stdout": res.stdout,
+            "stderr": res.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "TIMEOUT",
+            "command": cmd,
+            "returncode": -1,
+            "duration_seconds": round(time.time() - t0, 3),
+            "stdout": "",
+            "stderr": f"Coverage execution timed out after 180s: {cmd}"
+        }
+    except Exception as e:
+        return {
+            "status": "ERROR",
+            "command": cmd,
+            "returncode": -1,
+            "duration_seconds": round(time.time() - t0, 3),
+            "stdout": "",
+            "stderr": str(e)
+        }
+
+def run_project_mutations(workspace_dir: str | Path | None = None, command_override: str = "") -> dict:
+    """Executes detected or specified mutation test command and captures output."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    cmd = command_override
+    if not cmd:
+        det = detect_project_framework(ws)
+        cmd = det.get("mutation_command", "")
+    if not cmd:
+        return {
+            "status": "UNSUPPORTED",
+            "command": "",
+            "returncode": -1,
+            "duration_seconds": 0.0,
+            "stdout": "",
+            "stderr": "No mutation command detected for workspace"
+        }
+
+    t0 = time.time()
+    try:
+        res = subprocess.run(
+            cmd,
+            shell=True,  # nosec: runner-shell
+            cwd=str(ws),
+            capture_output=True,
+            text=True,
+            timeout=240
+        )
+        duration = round(time.time() - t0, 3)
+        return {
+            "status": "PASS" if res.returncode == 0 else "FAIL",
+            "command": cmd,
+            "returncode": res.returncode,
+            "duration_seconds": duration,
+            "stdout": res.stdout,
+            "stderr": res.stderr
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "TIMEOUT",
+            "command": cmd,
+            "returncode": -1,
+            "duration_seconds": round(time.time() - t0, 3),
+            "stdout": "",
+            "stderr": f"Mutation test execution timed out after 240s: {cmd}"
         }
     except Exception as e:
         return {
@@ -396,6 +542,18 @@ def handle_cli_mode() -> bool:
         print(json.dumps(res, indent=2))
         sys.exit(0 if res["status"] == "PASS" else 1)
 
+    if first in ("--run-coverage", "--coverage"):
+        ws = args[1] if len(args) > 1 else None
+        res = run_project_coverage(ws)
+        print(json.dumps(res, indent=2))
+        sys.exit(0 if res["status"] == "PASS" else 1)
+
+    if first in ("--run-mutation", "--run-mutations", "--mutation", "--mutations"):
+        ws = args[1] if len(args) > 1 else None
+        res = run_project_mutations(ws)
+        print(json.dumps(res, indent=2))
+        sys.exit(0 if res["status"] == "PASS" else 1)
+
     return False
 
 def main():
@@ -446,7 +604,11 @@ def main():
                     print(f"⚠️ [Antigravity Auto-Debug] Diagnostic cache write failed: {write_err}", file=sys.stderr)
 
 if __name__ == "__main__":
-    is_cli = len(sys.argv) > 1 and sys.argv[1] in ("--detect", "-d", "--last-error", "--clear-last-error", "--check", "--run-tests", "--run-benchmark", "--run-benchmarks", "--benchmark")
+    is_cli = len(sys.argv) > 1 and sys.argv[1] in (
+        "--detect", "-d", "--last-error", "--clear-last-error", "--check",
+        "--run-tests", "--run-benchmark", "--run-benchmarks", "--benchmark",
+        "--run-coverage", "--coverage", "--run-mutation", "--run-mutations", "--mutation", "--mutations"
+    )
     try:
         main()
     finally:

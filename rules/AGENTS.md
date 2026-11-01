@@ -124,3 +124,11 @@ Whenever creating or modifying frontend layouts, HTML, CSS, React, Vue, or Svelt
 - **Mutation Hardening**: Verify that tests fail when mutating production logic. Ensure high assertion density.
 - **Domain Layer Isolation**: Keep core business logic independent of external frameworks, databases, and network transports.
 - **Supply Chain Security**: Scan dependencies using automated vulnerability auditing tools (`pip-audit`, `npm audit`, `cargo audit`).
+
+---
+
+## 13. Public API Contract Preservation & Non-Breaking Evolution
+- **Contract-First Stability**: Never remove, rename, or reorder parameters in exported or public interfaces.
+- **Additive Evolution**: Add new parameters only as optional with backward-compatible defaults.
+- **Schema & Payload Compatibility**: Ensure data schemas (JSON, Protobuf, DB migrations) accept legacy payloads without runtime failure.
+- **Deprecation Lifecycle**: Mark obsolete APIs with explicit deprecation warnings and migration guidance before removal in major versions.

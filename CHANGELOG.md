@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.11.0] — 2026-11-01
+
+### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added
+- **Polyglot Semantic AST & Static Vulnerability Analyzers**:
+  - Python AST analysis in `scripts/critic_loop.py` detecting dynamic subprocess calls with `shell=True` (`CommandInjectionRisk`), insecure `pickle.loads` (`InsecureDeserialization`), dynamic `eval`/`exec` (`DangerousEval`), and dynamic f-string SQL injections (`SQLInjectionRisk`). Added `# nosec: runner-shell` / `# safe-shell` and `is_test_file` bypasses.
+  - Rust static analysis detecting unhandled production panics (`unwrap()` / `expect()`) in non-test files (`ProductionPanicRisk`).
+  - Go static analysis detecting unhandled `panic()` in non-test files (`UnhandledPanic`).
+  - JavaScript / TypeScript checks detecting dynamic `eval()`/`Function()` (`DangerousEval`) and unsafe `innerHTML` DOM assignments (`XSSRisk`).
+- **Test Coverage & Mutation Testing Integration**:
+  - Added automated framework detection for coverage commands (`pytest --cov`, `cargo tarpaulin`, `go test -cover`, `npm test -- --coverage`) and mutation testing (`mutmut`, `cargo mutants`, `stryker`) across 10+ languages in `scripts/auto_debug_runner.py`.
+  - Added `--coverage` and `--mutation` CLI flags to `scripts/auto_debug_runner.py`.
+- **PreToolUse Safety Guardrail Hook (`scripts/pre_tool_guard.py`)**:
+  - Implemented Antigravity `PreToolUse` hook protocol blocking catastrophic operations: `rm -rf /`, `rm -rf .git`, filesystem formatting (`mkfs`), raw disk writes (`dd of=/dev/sd*`), fork bombs, and force pushes to primary branches.
+  - Added real-time secret leak blocking for file writes containing unencrypted private keys, cloud tokens, or direct writes to `.git/` metadata.
+  - Registered `PreToolUse` matcher in `hooks.json`.
+- **Modular Pattern Reference Catalog**:
+  - Created `skills/code-review/references/patterns.md` containing idiomatic, concrete patterns for Typestate, Branded Nominal Types, Structured Concurrency with cancellation tokens, and Property-Based Testing across TypeScript, Python, Rust, and Go.
+- **Formal Inductive Invariant Specification**:
+  - Enhanced `skills/plan/SKILL.md` and `skills/brainstorm/SKILL.md` with formal inductive loop invariant schemas: Precondition ($P$), Loop Invariant ($I$), Variant/Termination metric ($V$), and Postcondition ($Q$).
+- **Pre-Commit Verification Pipeline Skill (`/commit`)**:
+  - Created `skills/commit/SKILL.md` defining an atomic 4-phase pre-commit protocol (Working Tree & Secret Scan $\to$ Static Critic Audit $\to$ Test Suite & Coverage Verification $\to$ Conventional Commits generation).
+  - Registered `/commit` slash command prompt in `plugin.json` and template `GEMINI.md`.
+- **Public API Contract Preservation & Evolution Rules**:
+  - Injected Section 13 into `rules/AGENTS.md` and enhanced `agents/opus-architect.md` establishing contract-first stability, additive parameter evolution, and non-breaking migration requirements.
+- **Template Parity & 100% Green Verification**:
+  - Mirrored all rules, agents, skills, and pattern catalogs into `templates/project-git-template/.agents/` with 100% byte-for-byte fidelity.
+  - Expanded test suite to 110 automated unit and integration tests passing with 100% green status.
+
+---
+
 ## [1.10.0] — 2026-11-01
 
 ### 🚀 Highlights & Claude Opus 5.5 Level Capabilities Added

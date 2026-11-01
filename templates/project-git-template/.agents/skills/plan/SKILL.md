@@ -27,6 +27,12 @@ List the exact files to create or modify:
 - Explicitly declare public contracts, database models, or external interfaces that **must remain unbroken**.
 - Define algorithmic bounds ($O(1)$, $O(n)$, $O(n \log n)$). Identify and eliminate quadratic or ReDoS risks.
 - Define domain Typestate transitions and Branded Type definitions.
+- **Formal Inductive Invariant Specification**:
+  When specifying iterative algorithms or state machines, define:
+  1. **Precondition ($P$)**: Initial state predicate required before entry.
+  2. **Loop Invariant ($I$)**: Inductive assertion holding true before and after each iteration ($I \land B \implies I'$).
+  3. **Loop Variant ($V$)**: Strictly monotonically decreasing non-negative metric ($V \ge 0$) proving termination.
+  4. **Postcondition ($Q$)**: Guaranteed final state verified upon termination ($I \land \neg B \implies Q$).
 
 ### 3. Atomic Task Breakdown (Red-Green Sequence)
 Format each subtask as an atomic, verifiable unit:
