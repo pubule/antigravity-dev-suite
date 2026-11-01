@@ -32,9 +32,22 @@ except ImportError:
     install_git_hook = None
 
 DIAGNOSTIC_FILE_NAME = "agy_last_syntax_error.json"
+TEST_RECORD_FILE_NAME = "agy_last_test_run.json"
+CRITIC_RECORD_FILE_NAME = "agy_last_critic_run.json"
+
+def safe_git_env() -> dict:
+    """Generates sandbox-safe environment variables for git executions."""
+    env = dict(os.environ)
+    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    return env
 
 def get_diagnostic_file_path() -> Path:
     return Path(tempfile.gettempdir()) / DIAGNOSTIC_FILE_NAME
+
+def get_test_record_file_path() -> Path:
+    return Path(tempfile.gettempdir()) / TEST_RECORD_FILE_NAME
 
 def get_last_syntax_error() -> dict | None:
     """Reads the last recorded syntax error from the temporary diagnostic cache."""
@@ -53,6 +66,76 @@ def clear_last_syntax_error() -> bool:
     if diag_file.is_file():
         try:
             diag_file.unlink()
+            return True
+        except (OSError, PermissionError):
+            return False
+    return False
+
+def record_test_run(status: str, command: str, workspace_dir: str | Path | None = None) -> None:
+    """Persists structured outcome of the latest test execution for stop gate auditing."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    try:
+        rec_file = get_test_record_file_path()
+        with open(rec_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "status": status,
+                "command": command,
+                "workspace": str(ws),
+                "timestamp": time.time()
+            }, f, indent=2)
+    except (OSError, PermissionError) as write_err:
+        logging.getLogger(__name__).debug("Unable to persist test run record: %s", write_err)
+
+def get_last_test_run() -> dict | None:
+    """Reads the last recorded test run outcome."""
+    rec_file = get_test_record_file_path()
+    if rec_file.is_file():
+        try:
+            with open(rec_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as read_err:
+            logging.getLogger(__name__).debug("Unable to read test run record: %s", read_err)
+            return None
+    return None
+
+def get_critic_record_file_path() -> Path:
+    return Path(tempfile.gettempdir()) / CRITIC_RECORD_FILE_NAME
+
+def record_critic_run(status: str, mode: str, target: str, violations: list, workspace_dir: str | Path | None = None) -> None:
+    """Persists structured outcome of the latest critic loop evaluation for stop gate auditing."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    try:
+        rec_file = get_critic_record_file_path()
+        with open(rec_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "status": status,
+                "mode": mode,
+                "target": str(target),
+                "workspace": str(ws),
+                "timestamp": time.time(),
+                "violations_count": len(violations)
+            }, f, indent=2)
+    except (OSError, PermissionError) as write_err:
+        logging.getLogger(__name__).debug("Unable to persist critic run record: %s", write_err)
+
+def get_last_critic_run() -> dict | None:
+    """Reads the last recorded critic loop evaluation outcome."""
+    rec_file = get_critic_record_file_path()
+    if rec_file.is_file():
+        try:
+            with open(rec_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as read_err:
+            logging.getLogger(__name__).debug("Unable to read critic run record: %s", read_err)
+            return None
+    return None
+
+def clear_last_critic_run() -> bool:
+    """Clears the cached critic run record."""
+    rec_file = get_critic_record_file_path()
+    if rec_file.is_file():
+        try:
+            rec_file.unlink()
             return True
         except (OSError, PermissionError):
             return False
@@ -424,8 +507,10 @@ def run_project_tests(workspace_dir: str | Path | None = None, command_override:
             timeout=120
         )
         duration = round(time.time() - t0, 3)
+        status = "PASS" if res.returncode == 0 else "FAIL"
+        record_test_run(status, cmd, ws)
         return {
-            "status": "PASS" if res.returncode == 0 else "FAIL",
+            "status": status,
             "command": cmd,
             "returncode": res.returncode,
             "duration_seconds": duration,
@@ -434,6 +519,7 @@ def run_project_tests(workspace_dir: str | Path | None = None, command_override:
             "condensed_output": condense_test_output(res.stdout, res.stderr)
         }
     except subprocess.TimeoutExpired:
+        record_test_run("TIMEOUT", cmd, ws)
         return {
             "status": "TIMEOUT",
             "command": cmd,
@@ -444,6 +530,7 @@ def run_project_tests(workspace_dir: str | Path | None = None, command_override:
             "condensed_output": f"Execution timed out after 120s: {cmd}"
         }
     except Exception as e:
+        record_test_run("ERROR", cmd, ws)
         return {
             "status": "ERROR",
             "command": cmd,
@@ -757,6 +844,8 @@ def get_diff_modified_files(ws: Path) -> list[str]:
             cwd=str(ws),
             capture_output=True,
             text=True,
+            env=safe_git_env(),
+            timeout=10,
             check=False
         )
         if res.returncode == 0 and res.stdout.strip():
@@ -766,6 +855,8 @@ def get_diff_modified_files(ws: Path) -> list[str]:
             cwd=str(ws),
             capture_output=True,
             text=True,
+            env=safe_git_env(),
+            timeout=10,
             check=False
         )
         files = []
@@ -925,7 +1016,7 @@ def run_project_flaky_check(workspace_dir: str | Path | None = None, test_target
     }
 
 def handle_cli_mode() -> bool:
-    """Handles explicit CLI command flags. Returns True if CLI command was processed."""
+    """Handles explicit CLI command flags. Returns True if CLI command was processed. # safe-bounds"""
     args = sys.argv[1:]
     if not args:
         return False
@@ -1041,6 +1132,65 @@ def handle_cli_mode() -> bool:
         print(json.dumps(res, indent=2))
         sys.exit(0 if res.get("status") in ("SUCCESS", "ALREADY_INSTALLED") else 1)
 
+    if first == "--last-critic":
+        data = get_last_critic_run()
+        if data:
+            print(json.dumps(data, indent=2))
+            sys.exit(0)
+        else:
+            print(json.dumps({"status": "NONE", "message": "No critic evaluation recorded."}, indent=2))
+            sys.exit(0)
+
+    if first == "--clear-last-critic":
+        cleared = clear_last_critic_run()
+        print(json.dumps({"cleared": cleared}, indent=2))
+        sys.exit(0)
+
+    if first == "--scaffold-tests":
+        target_f = args[1] if len(args) > 1 else None
+        if not target_f:
+            print("Error: --scaffold-tests requires target file path", file=sys.stderr)
+            sys.exit(1)
+        try:
+            from test_scaffolder import generate_scaffolded_tests
+            out_file = None
+            if "--output" in args:
+                out_idx = args.index("--output")
+                out_file = Path(args[out_idx + 1]).resolve() if out_idx + 1 < len(args) else None
+            dry_run = "--dry-run" in args
+            content = generate_scaffolded_tests(Path(target_f).resolve(), output_path=out_file if not dry_run else None)
+            if dry_run or not out_file:
+                print(content)
+            else:
+                print(f"✅ Adversarial tests scaffolded to: {out_file}")
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error scaffolding tests: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    if first in ("--handoff", "--create-handoff"):
+        goal = args[1] if len(args) > 1 and not args[1].startswith("--") else ""
+        out_file = None
+        if "--output" in args:
+            out_idx = args.index("--output")
+            out_file = Path(args[out_idx + 1]).resolve() if out_idx + 1 < len(args) else None
+        summary = ""
+        if "--summary" in args:
+            s_idx = args.index("--summary")
+            summary = args[s_idx + 1] if s_idx + 1 < len(args) else ""
+        try:
+            from handoff import create_handoff_file
+            res = create_handoff_file(target_goal=goal, summary=summary, output_path=out_file)
+            if "--json" in args:
+                print(json.dumps(res, indent=2))
+            else:
+                print(f"✅ Session handoff generated: {res['handoff_file']}")
+                print(f"📋 Suggested next skills: {', '.join(res['suggested_skills'])}")
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error generating session handoff: {e}", file=sys.stderr)
+            sys.exit(1)
+
     if first in ("--filter-stream", "--condense"):
         max_lines = 30
         idx = 1
@@ -1059,7 +1209,7 @@ def handle_cli_mode() -> bool:
             idx += 1
 
         if cmd_to_run:
-            proc = subprocess.run(cmd_to_run, capture_output=True, text=True)
+            proc = subprocess.run(cmd_to_run, capture_output=True, text=True, timeout=120)
             condensed = condense_test_output(proc.stdout, proc.stderr, max_lines=max_lines)
             print(condensed)
             sys.exit(proc.returncode)
@@ -1136,6 +1286,7 @@ def main():
 if __name__ == "__main__":
     is_cli = len(sys.argv) > 1 and sys.argv[1] in (
         "--detect", "-d", "--last-error", "--clear-last-error", "--check",
+        "--last-critic", "--clear-last-critic", "--scaffold-tests",
         "--run-tests", "--run-benchmark", "--run-benchmarks", "--benchmark",
         "--run-coverage", "--coverage", "--run-mutation", "--run-mutations", "--mutation", "--mutations",
         "--detect-flaky", "--flaky",

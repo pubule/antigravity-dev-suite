@@ -228,6 +228,13 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                             )
                             print(json.dumps(result, indent=2))
                             return 0
+                elif file_path.suffix.lower() not in [".html", ".htm", ".xhtml"]:
+                    result["status"] = "SKIPPED_NOT_FRONTEND"
+                    result["warnings"].append(
+                        f"Target '{file_path.name}' is not an HTML document or frontend component."
+                    )
+                    print(json.dumps(result, indent=2))
+                    return 0
                 else:
                     url = file_path.as_uri() + suffix_fragment
 

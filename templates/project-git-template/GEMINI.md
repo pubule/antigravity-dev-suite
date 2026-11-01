@@ -25,6 +25,7 @@ This repository follows the **Antigravity Dev Suite** engineering standards:
 - `/refactor`: Safe tech debt reduction preserving invariants and 100% green tests.
 - `/commit`: Pre-commit verification pipeline with secret scans and Conventional Commits.
 - `/visual-qa`: Dual-viewport Playwright visual inspector.
+- `/handoff`: Portable session handoff briefing serialization into temporary directory.
 
 ---
 

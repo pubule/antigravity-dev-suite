@@ -35,6 +35,15 @@ RUST_PUB_ENUM = re.compile(r'^\s*pub\s+enum\s+(?P<name>[a-zA-Z0-9_]+)', re.MULTI
 RUST_PUB_TRAIT = re.compile(r'^\s*pub\s+trait\s+(?P<name>[a-zA-Z0-9_]+)', re.MULTILINE)
 
 
+def safe_git_env() -> Dict[str, str]:
+    """Generates sandbox-safe environment variables for git executions."""
+    env = dict(os.environ)
+    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    env["GIT_CONFIG_SYSTEM"] = "/dev/null"
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    return env
+
+
 def extract_python_exports(source_code: str) -> Dict[str, Dict[str, Any]]:
     """Extracts public symbols and parameter signatures from Python source using AST."""
     symbols: Dict[str, Dict[str, Any]] = {}
@@ -277,6 +286,8 @@ def get_git_base_content(git_ref: str, relative_path: str, repo_root: Path) -> O
             cwd=str(repo_root),
             capture_output=True,
             text=True,
+            env=safe_git_env(),
+            timeout=10,
             check=False
         )
         if res.returncode == 0:
@@ -307,6 +318,8 @@ def audit_api_contract_drift(
             cwd=str(target_dir),
             capture_output=True,
             text=True,
+            env=safe_git_env(),
+            timeout=10,
             check=False
         )
         if res.returncode != 0:
@@ -329,6 +342,8 @@ def audit_api_contract_drift(
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
+                env=safe_git_env(),
+                timeout=10,
                 check=False
             )
             changed_names = [line.strip() for line in diff_res.stdout.splitlines() if line.strip()]

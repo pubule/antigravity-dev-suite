@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.16.0] — 2026-11-01
+
+### 🚀 Highlights & Flash 3.8 / Claude Opus 5.5 Enterprise Capabilities
+- **Cross-Platform Session Handoff Generator (`scripts/handoff.py` & `/handoff` skill)**:
+  - Ported and hardened the session handoff pattern into standalone Python script `scripts/handoff.py` for 100% portability across macOS (BSD), Linux (GNU), and Windows 10/11.
+  - Automatically captures objective, context notes, git context, telemetry state (`last_test`, `last_critic`), modified files, and recommended next skills.
+  - Incorporates dynamic secret scrubbing (`SECRET_PATTERNS`) to prevent credential leakage.
+  - Integrated into `scripts/auto_debug_runner.py` via `--handoff` / `--create-handoff`.
+  - Added skill definition at `skills/handoff/SKILL.md` and template mirror at `templates/project-git-template/.agents/skills/handoff/SKILL.md`.
+- **Pre-Tool Guard & Stop Gate Hardening**:
+  - Implemented automatic pruning of transient telemetry from non-existent temporary test files in `scripts/stop_gate.py` and `scripts/critic_loop.py`.
+  - Enforced dual-gate completion: requiring both passing test telemetry and clean critic audit prior to task resolution.
+- **Cognitive Complexity & AST Critic Enhancements**:
+  - Enhanced `scripts/diff_guard.py` with cognitive complexity inspection and suppression comments.
+  - Added AST cache persistence in `scripts/critic_loop.py` to accelerate incremental audits.
+- **Rule Modularization & ASD-STE100 Technical Refactoring**:
+  - Modularized language rules into `rules/languages/typescript.md`, `rules/languages/python.md`, `rules/languages/compiled.md`, and `rules/database/migrations.md`.
+  - Enforced ASD-STE100 sentence constraints across documentation and agent instructions.
+
+---
+
 ## [1.15.0] — 2026-11-01
 
 ### 🚀 Highlights & Flash 3.8 Latency & Cognitive Acceleration

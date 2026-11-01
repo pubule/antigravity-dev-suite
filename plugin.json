@@ -1,7 +1,7 @@
 {
   "name": "antigravity-dev-suite",
-  "version": "1.15.0",
-  "description": "Enterprise Claude Opus 5.5 Coding Standard, ASD-STE100 Technical Communication & Cross-Platform Suite for Antigravity (macOS, Linux, Windows 10/11): Brainstorming, Planning, Strict TDD, Self-Healing Auto-Debug, Adversarial Code Review, Safe Refactoring, Pre-Commit Verification, Dual-Viewport Playwright Visual QA, Vulnerability Security Audit, and Performance Benchmarking.",
+  "version": "1.16.0",
+  "description": "Enterprise Claude Opus 5.5 Coding Standard, ASD-STE100 Technical Communication & Cross-Platform Suite for Antigravity (macOS, Linux, Windows 10/11): Brainstorming, Planning, Strict TDD, Self-Healing Auto-Debug, Adversarial Code Review, Safe Refactoring, Pre-Commit Verification, Dual-Viewport Playwright Visual QA, Vulnerability Security Audit, Performance Benchmarking, and Portable Session Handoff.",
   "displayName": "Antigravity Dev Suite",
   "suggestedPrompts": [
     "/opus-dev Esegui lo sviluppo end-to-end con standard Claude Opus 5.5, ASD-STE100, strict TDD e auto-debug",
@@ -13,6 +13,7 @@
     "/benchmark Esegui profiling delle prestazioni, rilevamento regressioni di latenza e analisi query N+1",
     "/refactor Riduci il debito tecnico e semplifica KISS preservando invarianti e test al 100%",
     "/commit Esegui la pipeline di pre-commit verification e Conventional Commits atomico",
-    "/visual-qa Esegui Playwright dual-viewport visual QA (Desktop 1280px + Mobile 375px)"
+    "/visual-qa Esegui Playwright dual-viewport visual QA (Desktop 1280px + Mobile 375px)",
+    "/handoff Compatta e serializza il contesto corrente in un documento di passaggio per una nuova sessione"
   ]
 }

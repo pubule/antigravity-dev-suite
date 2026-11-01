@@ -24,8 +24,10 @@ flowchart TD
 
 ### Pass 1: Invariants, Algorithmic Bounds & KISS/YAGNI Gate
 - **KISS/YAGNI Audit**: Did the code introduce speculative abstractions, unused parameters, or micro-frameworks?
+- **Diff Hygiene & Comment Preservation**: Inspect git diff against HEAD via `python3 scripts/diff_guard.py` to ensure existing comments and docstrings are maintained and no nesting blowups occurred.
 - **Algorithmic Bounds**: Verify time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns via `python3 scripts/critic_loop.py --mode semantic --target .`.
 - **Targeted Symbol Inspection**: Use `python3 scripts/semantic_slice.py <file> --symbol <name>` to isolate symbols and dependencies cleanly.
+- **Cross-File Impact**: Check call-sites using `python3 scripts/symbol_impact.py <symbol>`.
 - **Contract Adherence**: Are public function and class signatures backwards-compatible? Verify with `python3 scripts/api_contract_guard.py --target .`.
 - **Edge cases**: Are boundary values (`0`, `-1`, empty collections, max size, Unicode) tested and handled?
 
@@ -83,6 +85,12 @@ Execute deterministic checks before invoking the `claude-critic` subagent:
 ```bash
 # Run full static audit across target directory
 python3 scripts/critic_loop.py --mode all --target .
+
+# Run AST diff hygiene and comment preservation check
+python3 scripts/diff_guard.py
+
+# Trace cross-file symbol callers and usage impact
+python3 scripts/symbol_impact.py <symbol>
 
 # Run security and secret scan only
 python3 scripts/critic_loop.py --mode security --target .

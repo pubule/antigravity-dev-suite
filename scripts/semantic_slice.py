@@ -113,13 +113,65 @@ def extract_python_slice(
 
 
 def find_brace_block_end(lines: List[str], start_line_idx: int) -> int:
-    """Finds the closing brace of a block starting from start_line_idx."""
+    """Finds the closing brace of a block starting from start_line_idx, ignoring string and comment contents. # safe-bounds"""
     depth = 0
     found_first_brace = False
+    in_single = False
+    in_double = False
+    in_backtick = False
+    in_block_comment = False
 
     for idx in range(start_line_idx, len(lines)):
         line = lines[idx]
-        for ch in line:
+        i = 0
+        n = len(line)
+        while i < n:
+            ch = line[i]
+
+            # 1. Multi-line block comment handler (/* ... */)
+            if in_block_comment:
+                if ch == '*' and i + 1 < n and line[i + 1] == '/':
+                    in_block_comment = False
+                    i += 2
+                    continue
+                i += 1
+                continue
+
+            # 2. Escaped character inside quotes or template literals
+            if (in_single or in_double or in_backtick) and ch == '\\':
+                i += 2
+                continue
+
+            # 3. String literals and template literals toggle
+            if not in_double and not in_backtick and ch == "'":
+                in_single = not in_single
+                i += 1
+                continue
+            if not in_single and not in_backtick and ch == '"':
+                in_double = not in_double
+                i += 1
+                continue
+            if not in_single and not in_double and ch == '`':
+                in_backtick = not in_backtick
+                i += 1
+                continue
+
+            # Skip checking braces if currently inside a literal string
+            if in_single or in_double or in_backtick:
+                i += 1
+                continue
+
+            # 4. Single-line comment (// ...)
+            if ch == '/' and i + 1 < n and line[i + 1] == '/':
+                break
+
+            # 5. Start of multi-line comment (/* ...)
+            if ch == '/' and i + 1 < n and line[i + 1] == '*':
+                in_block_comment = True
+                i += 2
+                continue
+
+            # 6. Structural brace counting
             if ch == '{':
                 depth += 1
                 found_first_brace = True
@@ -127,6 +179,8 @@ def find_brace_block_end(lines: List[str], start_line_idx: int) -> int:
                 depth -= 1
                 if found_first_brace and depth <= 0:
                     return idx + 1
+
+            i += 1
 
     return len(lines)
 

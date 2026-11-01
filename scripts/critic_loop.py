@@ -11,8 +11,11 @@ import re
 import ast
 import json
 import glob
+import hashlib
 import argparse
+import tempfile
 import subprocess
+from typing import Any
 from pathlib import Path
 
 # Add current scripts directory to sys.path for robust relative import
@@ -28,15 +31,61 @@ except ImportError:
     find_source_files = validator_core.find_source_files
 
 try:
-    from auto_debug_runner import get_last_syntax_error, clear_last_syntax_error
+    from auto_debug_runner import (
+        get_last_syntax_error,
+        clear_last_syntax_error,
+        record_critic_run,
+        get_last_critic_run,
+        clear_last_critic_run,
+    )
 except ImportError:
     get_last_syntax_error = lambda: None
     clear_last_syntax_error = lambda: False
+    record_critic_run = lambda *args, **kwargs: None
+    get_last_critic_run = lambda: None
+    clear_last_critic_run = lambda: False
 
 try:
     from api_contract_guard import audit_api_contract_drift
 except ImportError:
     audit_api_contract_drift = None
+
+try:
+    from diff_guard import audit_diff_guard
+except ImportError:
+    audit_diff_guard = None
+
+def get_critic_cache_path(workspace_dir: Path | None = None) -> Path:
+    """Returns filesystem path for incremental AST critic cache."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    cache_dir = ws / ".agy_cache"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / "critic_cache.json"
+    except (OSError, PermissionError):
+        fallback_dir = Path(tempfile.gettempdir()) / "agy_critic_cache"
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        ws_hash = hashlib.md5(str(ws).encode("utf-8")).hexdigest()[:8]
+        return fallback_dir / f"critic_cache_{ws_hash}.json"
+
+def compute_file_sha256(file_path: Path) -> str:
+    """Computes SHA-256 digest of file contents for incremental cache invalidation."""
+    hasher = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+def clear_critic_cache(workspace_dir: Path | None = None) -> bool:
+    """Purges persistent incremental critic cache."""
+    cache_file = get_critic_cache_path(workspace_dir)
+    if cache_file.is_file():
+        try:
+            cache_file.unlink()
+            return True
+        except OSError:
+            return False
+    return False
 
 SECRET_PATTERNS = [
     (re.compile(r'\b(?:sk-[a-zA-Z0-9_\-]{20,}|ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{50,}|glpat-[a-zA-Z0-9_\-]{20,}|xox[baprs]-[0-9a-zA-Z]{10,48}|sk_live_[0-9a-zA-Z]{24,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b'), "API key / token"),
@@ -57,7 +106,7 @@ SQL_NON_CONCURRENT_INDEX = re.compile(r'(?i)\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?!
 SQL_UNSAFE_DROP = re.compile(r'(?i)\bDROP\s+(?:TABLE|COLUMN)\b')
 SQL_UNSAFE_ALTER_TYPE = re.compile(r'(?i)\bALTER\s+(?:TABLE\s+\S+\s+)?(?:ALTER\s+COLUMN\s+\S+\s+TYPE|MODIFY\s+\S+)\b')
 
-def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all") -> dict:
+def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all", use_cache: bool = True) -> dict:
     """Audits code syntax, structural integrity, OWASP security, and hygiene defect patterns."""
     logic_report = {
         "status": "PASS",
@@ -126,14 +175,43 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
     check_security = submode in ["all", "logic", "security"]
     check_semantic = submode in ["all", "logic", "security", "complexity", "semantic"]
 
+    cache: dict[str, Any] = {}
+    cache_path = get_critic_cache_path()
+    if use_cache and not test_mode:
+        try:
+            if cache_path.is_file():
+                with open(cache_path, "r", encoding="utf-8") as cf:
+                    cache = json.load(cf)
+        except Exception:
+            cache = {}
+
+    cache_dirty = False
+
     for file in files_to_check:
+        file_sha = None
+        cache_key = f"{file.resolve()}:{submode}"
+        if use_cache and not test_mode and file.is_file():
+            try:
+                file_sha = compute_file_sha256(file)
+                if cache_key in cache and cache[cache_key].get("sha256") == file_sha:
+                    cached_entry = cache[cache_key]
+                    if cached_entry.get("status") == "RETRY":
+                        logic_report["status"] = "RETRY"
+                    logic_report["violations"].extend(cached_entry.get("violations", []))
+                    logic_report["suggested_fixes"].extend(cached_entry.get("suggested_fixes", []))
+                    continue
+            except Exception:
+                file_sha = None
+
+        file_viols: list[str] = []
+        file_fixes: list[str] = []
+
         if check_syntax:
             errs = validate_code_file(file)
             if errs:
-                logic_report["status"] = "RETRY"
                 for err in errs:
-                    logic_report["violations"].append(err)
-                    logic_report["suggested_fixes"].append(f"Fix syntax/delimiter defect in {file.name}")
+                    file_viols.append(err)
+                    file_fixes.append(f"Fix syntax/delimiter defect in {file.name}")
 
         # Security, hygiene, and semantic complexity checks
         if check_security or check_semantic:
@@ -145,9 +223,8 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                 if check_security:
                     for pat, desc in SECRET_PATTERNS:
                         if pat.search(content):
-                            logic_report["status"] = "RETRY"
-                            logic_report["violations"].append(f"SecurityViolation in {file.name}: potential hardcoded secret detected ({desc})")
-                            logic_report["suggested_fixes"].append("Extract secret into secure environment variable")
+                            file_viols.append(f"SecurityViolation in {file.name}: potential hardcoded secret detected ({desc})")
+                            file_fixes.append("Extract secret into secure environment variable")
 
                 # 2. Defensive Engineering & Semantic AST in Python
                 if file.suffix in [".py", ".pyi"]:
@@ -155,6 +232,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                     content_lines = content.splitlines()
                     try:
                         tree = ast.parse(content, filename=str(file))
+                        for p in ast.walk(tree):
+                            for ch in ast.iter_child_nodes(p):
+                                ch.parent = p
+
                         for node in ast.walk(tree):
                             lineno = getattr(node, "lineno", 0)
                             start_line = max(0, lineno - 1)
@@ -173,23 +254,64 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                         and stmt.value.value is Ellipsis
                                     )
                                     if is_pass or is_ellipsis:
-                                        logic_report["status"] = "RETRY"
                                         action_word = "pass" if is_pass else "..."
-                                        logic_report["violations"].append(f"EmptyExceptionHandling in {file.name}: empty 'except' block with {action_word} at line {lineno}")
-                                        logic_report["suggested_fixes"].append("Handle exception or log with contextual details")
+                                        file_viols.append(f"EmptyExceptionHandling in {file.name}: empty 'except' block with {action_word} at line {lineno}")
+                                        file_fixes.append("Handle exception or log with contextual details")
 
                             # Mutable default arguments (def fn(x=[]))
                             if check_semantic and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                                 all_defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d is not None]
                                 for d in all_defaults:
                                     if isinstance(d, (ast.List, ast.Dict, ast.Set)):
-                                        logic_report["status"] = "RETRY"
-                                        logic_report["violations"].append(
+                                        file_viols.append(
                                             f"MutableDefaultArgument in {file.name}: function '{node.name}' defines mutable default argument at line {lineno}"
                                         )
-                                        logic_report["suggested_fixes"].append(
+                                        file_fixes.append(
                                             f"Use None as default in '{node.name}' and initialize collection dynamically inside body"
                                         )
+
+                            # Test rigor check in test files (Vacuous / Shallow tests)
+                            if is_test_file and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                if node.name.startswith("test_") or node.name.endswith("_test"):
+                                    if "# safe-test" not in node_text:
+                                        assert_count = 0
+                                        trivial_assert = False
+                                        for child in ast.walk(node):
+                                            if isinstance(child, ast.Assert):
+                                                assert_count += 1
+                                                if isinstance(child.test, ast.Constant) and child.test.value is True:
+                                                    trivial_assert = True
+                                                elif isinstance(child.test, ast.Compare):
+                                                    if isinstance(child.test.left, ast.Constant) and len(child.test.comparators) == 1 and isinstance(child.test.comparators[0], ast.Constant) and child.test.left.value == child.test.comparators[0].value:
+                                                        trivial_assert = True
+                                            elif isinstance(child, ast.Call):
+                                                c_func = child.func
+                                                if isinstance(c_func, ast.Attribute) and isinstance(c_func.value, ast.Name) and c_func.value.id == "self" and c_func.attr.startswith("assert"):
+                                                    assert_count += 1
+                                                    if c_func.attr in ("assertTrue", "assertFalse") and child.args and isinstance(child.args[0], ast.Constant):
+                                                        trivial_assert = True
+                                                    elif c_func.attr == "assertEqual" and len(child.args) >= 2 and isinstance(child.args[0], ast.Constant) and isinstance(child.args[1], ast.Constant) and child.args[0].value == child.args[1].value:
+                                                        trivial_assert = True
+                                                elif isinstance(c_func, ast.Attribute) and isinstance(c_func.value, ast.Name) and c_func.value.id == "pytest" and c_func.attr in ("raises", "fail"):
+                                                    assert_count += 1
+                                            elif isinstance(child, ast.With):
+                                                for item in child.items:
+                                                    if isinstance(item.context_expr, ast.Call) and isinstance(item.context_expr.func, ast.Attribute) and isinstance(item.context_expr.func.value, ast.Name) and item.context_expr.func.value.id == "pytest" and item.context_expr.func.attr == "raises":
+                                                        assert_count += 1
+                                        if assert_count == 0:
+                                            file_viols.append(
+                                                f"VacuousTest in {file.name}: test function '{node.name}' has 0 assertions at line {lineno}"
+                                            )
+                                            file_fixes.append(
+                                                f"Add explicit assertions verifying return values or state invariants to '{node.name}'"
+                                            )
+                                        elif assert_count == 1 and trivial_assert:
+                                            file_viols.append(
+                                                f"ShallowTest in {file.name}: test function '{node.name}' contains only 1 trivial assertion at line {lineno}"
+                                            )
+                                            file_fixes.append(
+                                                f"Implement meaningful assertions verifying actual domain state or return values in '{node.name}'"
+                                            )
 
                             # ReDoS check in Python re.compile calls
                             if check_semantic and isinstance(node, ast.Call):
@@ -205,12 +327,67 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                     if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
                                         m = REDOS_PATTERN.search(first_arg.value)
                                         if m:
-                                            logic_report["status"] = "RETRY"
-                                            logic_report["violations"].append(
+                                            file_viols.append(
                                                 f"ReDoSRisk in {file.name}: regex contains nested quantifiers '{m.group(0)}' with catastrophic backtracking risk at line {lineno}"
                                             )
-                                            logic_report["suggested_fixes"].append(
+                                            file_fixes.append(
                                                 "Refactor regex to eliminate nested quantifiers and prevent catastrophic backtracking"
+                                            )
+
+                                # Missing timeout in subprocess and network calls
+                                if not is_test_file and not has_nosec and "# safe-timeout" not in node_text:
+                                    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "subprocess":
+                                        if func.attr in ("run", "Popen", "check_output", "call", "check_call"):
+                                            if not any(kw.arg == "timeout" for kw in node.keywords):
+                                                file_viols.append(
+                                                    f"MissingTimeoutRisk in {file.name}: subprocess.{func.attr}() called without explicit timeout at line {lineno}"
+                                                )
+                                                file_fixes.append(
+                                                    "Provide explicit timeout parameter (e.g. timeout=30) to prevent indefinite hangs"
+                                                )
+                                    client_id = ""
+                                    if isinstance(func, ast.Attribute):
+                                        if isinstance(func.value, ast.Name) and func.value.id in ("requests", "httpx"):
+                                            client_id = func.value.id
+                                        elif isinstance(func.value, ast.Attribute) and func.value.attr == "request" and isinstance(func.value.value, ast.Name) and func.value.value.id == "urllib":
+                                            client_id = "urllib.request"
+                                    if client_id and func.attr in ("get", "post", "put", "delete", "patch", "request", "urlopen"):
+                                        if not any(kw.arg == "timeout" for kw in node.keywords):
+                                            file_viols.append(
+                                                f"MissingTimeoutRisk in {file.name}: {client_id}.{func.attr}() called without explicit timeout at line {lineno}"
+                                            )
+                                            file_fixes.append(
+                                                "Provide explicit timeout parameter to avoid indefinite network hangs"
+                                            )
+
+                                # Unmanaged resource handles (open without with)
+                                if isinstance(func, ast.Name) and func.id == "open":
+                                    if not has_nosec and "# safe-resource" not in node_text:
+                                        p_node = getattr(node, "parent", None)
+                                        if not (isinstance(p_node, ast.withitem) and p_node.context_expr is node):
+                                            file_viols.append(
+                                                f"UnmanagedResourceRisk in {file.name}: open() called without 'with' context manager at line {lineno}"
+                                            )
+                                            file_fixes.append(
+                                                "Use 'with open(...) as handle:' context manager to ensure deterministic cleanup"
+                                            )
+
+                                # Discarded / Floating asyncio.create_task
+                                if not is_test_file and not has_nosec and "# safe-task" not in node_text:
+                                    is_task = False
+                                    if isinstance(func, ast.Attribute) and func.attr == "create_task":
+                                        if isinstance(func.value, ast.Name) and func.value.id == "asyncio":
+                                            is_task = True
+                                    elif isinstance(func, ast.Name) and func.id == "create_task":
+                                        is_task = True
+                                    if is_task:
+                                        p_node = getattr(node, "parent", None)
+                                        if isinstance(p_node, ast.Expr):
+                                            file_viols.append(
+                                                f"FloatingTaskRisk in {file.name}: discarded asyncio.create_task() reference at line {lineno} (risks premature garbage collection)"
+                                            )
+                                            file_fixes.append(
+                                                "Retain task reference in a collection or await it to prevent premature GC cancellation"
                                             )
 
                                 # Command injection via subprocess shell=True
@@ -223,11 +400,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                     if is_shell_true and node.args:
                                         first_arg = node.args[0]
                                         if not (isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str)):
-                                            logic_report["status"] = "RETRY"
-                                            logic_report["violations"].append(
+                                            file_viols.append(
                                                 f"CommandInjectionRisk in {file.name}: subprocess call with shell=True and dynamic arguments at line {lineno}"
                                             )
-                                            logic_report["suggested_fixes"].append(
+                                            file_fixes.append(
                                                 "Pass arguments as a list without shell=True to prevent command injection"
                                             )
 
@@ -235,22 +411,20 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                 if not is_test_file and not has_nosec:
                                     if isinstance(func, ast.Attribute) and func.attr in ("load", "loads"):
                                         if isinstance(func.value, ast.Name) and func.value.id == "pickle":
-                                            logic_report["status"] = "RETRY"
-                                            logic_report["violations"].append(
+                                            file_viols.append(
                                                 f"InsecureDeserialization in {file.name}: unsafe pickle.{func.attr}() at line {lineno}"
                                             )
-                                            logic_report["suggested_fixes"].append(
+                                            file_fixes.append(
                                                 "Use secure serialization formats (JSON, Protobuf, or SafeLoader)"
                                             )
 
                                 # Dangerous dynamic eval/exec
                                 if not is_test_file and not has_nosec:
                                     if isinstance(func, ast.Name) and func.id in ("eval", "exec"):
-                                        logic_report["status"] = "RETRY"
-                                        logic_report["violations"].append(
+                                        file_viols.append(
                                             f"DangerousEval in {file.name}: dynamic invocation of {func.id}() at line {lineno}"
                                         )
-                                        logic_report["suggested_fixes"].append(
+                                        file_fixes.append(
                                             f"Replace {func.id}() with explicit AST parsing or structured data parsing"
                                         )
 
@@ -263,11 +437,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                             has_sql_kw = True
                                             break
                                 if has_sql_kw and any(isinstance(part, ast.FormattedValue) for part in node.values):
-                                    logic_report["status"] = "RETRY"
-                                    logic_report["violations"].append(
+                                    file_viols.append(
                                         f"SQLInjectionRisk in {file.name}: dynamic string interpolation in SQL statement at line {lineno}"
                                     )
-                                    logic_report["suggested_fixes"].append(
+                                    file_fixes.append(
                                         "Use parameterized queries or prepared statements instead of f-strings"
                                     )
 
@@ -284,11 +457,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                     # Sequence lookup .index() inside loop
                                     if isinstance(child, ast.Call) and isinstance(getattr(child, "func", None), ast.Attribute):
                                         if child.func.attr == "index":
-                                            logic_report["status"] = "RETRY"
-                                            logic_report["violations"].append(
+                                            file_viols.append(
                                                 f"QuadraticTrap in {file.name}: linear sequence lookup .index() inside loop at line {child_lineno} (risks O(n^2) complexity)"
                                             )
-                                            logic_report["suggested_fixes"].append(
+                                            file_fixes.append(
                                                 "Convert sequence to dict or hash map before loop to achieve O(1) lookups"
                                             )
                                             break
@@ -299,11 +471,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                                             if isinstance(op, (ast.In, ast.NotIn)) and isinstance(comp, ast.Name):
                                                 var_lower = comp.id.lower()
                                                 if any(var_lower.endswith(sfx) for sfx in ("_list", "_arr", "_array", "_items", "_records", "_rows")):
-                                                    logic_report["status"] = "RETRY"
-                                                    logic_report["violations"].append(
+                                                    file_viols.append(
                                                         f"QuadraticTrap in {file.name}: linear membership search 'in {comp.id}' inside loop at line {child_lineno} (risks O(n^2) complexity)"
                                                     )
-                                                    logic_report["suggested_fixes"].append(
+                                                    file_fixes.append(
                                                         f"Convert '{comp.id}' to set or dict before loop to achieve O(1) membership testing"
                                                     )
                                                     break
@@ -318,51 +489,46 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                             continue
                         # Unawaited fetch call
                         if UNPROTECTED_FETCH.search(line):
-                            logic_report["status"] = "RETRY"
-                            logic_report["violations"].append(
+                            file_viols.append(
                                 f"UnawaitedPromise in {file.name}: floating fetch() call without await, return, or void at line {line_idx}"
                             )
-                            logic_report["suggested_fixes"].append(
+                            file_fixes.append(
                                 "Await promise or handle rejection with .catch() or return statement"
                             )
                         # Quadratic trap in JS/TS: indexOf or findIndex in loop
                         if any(pat in line for pat in [".indexOf(", ".findIndex("]) and ("// nosec" not in line and "// safe-bounds" not in line):
                             prev_context = "\n".join(content.splitlines()[max(0, line_idx - 6):line_idx])
                             if any(k in prev_context for k in ["for (", ".forEach(", ".map("]):
-                                logic_report["status"] = "RETRY"
-                                logic_report["violations"].append(
+                                file_viols.append(
                                     f"QuadraticTrap in {file.name}: linear search inside iteration loop at line {line_idx} (risks O(n^2) complexity)"
                                 )
-                                logic_report["suggested_fixes"].append(
+                                file_fixes.append(
                                     "Index array into Map or Set before loop for O(1) lookups"
                                 )
                         # ReDoS in JS RegExp constructor or regex literals
                         if "RegExp" in line or "= /" in line or line.startswith("/"):
                             m = REDOS_PATTERN.search(line)
                             if m:
-                                logic_report["status"] = "RETRY"
-                                logic_report["violations"].append(
+                                file_viols.append(
                                     f"ReDoSRisk in {file.name}: regex contains nested quantifiers '{m.group(0)}' at line {line_idx}"
                                 )
-                                logic_report["suggested_fixes"].append(
+                                file_fixes.append(
                                     "Refactor regex to eliminate nested quantifiers and prevent catastrophic backtracking"
                                 )
                         # Dangerous dynamic code evaluation
                         if UNSAFE_EVAL_JS.search(line):
-                            logic_report["status"] = "RETRY"
-                            logic_report["violations"].append(
+                            file_viols.append(
                                 f"DangerousEval in {file.name}: dynamic code execution via eval/Function at line {line_idx}"
                             )
-                            logic_report["suggested_fixes"].append(
+                            file_fixes.append(
                                 "Avoid dynamic code execution; use structured JSON or explicit handlers"
                             )
                         # XSS risk via innerHTML
                         if UNSAFE_INNER_HTML.search(line):
-                            logic_report["status"] = "RETRY"
-                            logic_report["violations"].append(
+                            file_viols.append(
                                 f"XSSRisk in {file.name}: unsanitized innerHTML or dangerouslySetInnerHTML at line {line_idx}"
                             )
-                            logic_report["suggested_fixes"].append(
+                            file_fixes.append(
                                 "Sanitize HTML using DOMPurify.sanitize() before assigning to DOM"
                             )
 
@@ -374,11 +540,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                         if stripped.startswith("//") or stripped.startswith("/*"):
                             continue
                         if GO_UNHANDLED_PANIC.search(line):
-                            logic_report["status"] = "RETRY"
-                            logic_report["violations"].append(
+                            file_viols.append(
                                 f"UnhandledPanic in {file.name}: unhandled panic() in production Go code at line {line_idx}"
                             )
-                            logic_report["suggested_fixes"].append(
+                            file_fixes.append(
                                 "Return an error (error value) instead of panicking in production code"
                             )
                         # Check for unreleased Mutex Lock
@@ -390,11 +555,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                             next_lines = "\n".join(go_lines[line_idx:line_idx + 6])
                             defer_pat = rf'defer\s+{re.escape(lock_var)}\.{unlock_method}\(\)'
                             if not re.search(defer_pat, next_lines):
-                                logic_report["status"] = "RETRY"
-                                logic_report["violations"].append(
+                                file_viols.append(
                                     f"UnprotectedMutexLock in {file.name}: {lock_var}.{method}() invoked without immediate defer {lock_var}.{unlock_method}() at line {line_idx}"
                                 )
-                                logic_report["suggested_fixes"].append(
+                                file_fixes.append(
                                     f"Add 'defer {lock_var}.{unlock_method}()' immediately after acquiring mutex lock"
                                 )
 
@@ -414,11 +578,10 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                             continue
                         m = RUST_UNWRAP_EXPECT.search(line)
                         if m:
-                            logic_report["status"] = "RETRY"
-                            logic_report["violations"].append(
+                            file_viols.append(
                                 f"ProductionPanicRisk in {file.name}: .{m.group(1)}() in production Rust code at line {line_idx}"
                             )
-                            logic_report["suggested_fixes"].append(
+                            file_fixes.append(
                                 f"Handle Result/Option using ?, match, or unwrap_or instead of .{m.group(1)}()"
                             )
 
@@ -431,39 +594,56 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
                             if stripped.startswith("--") or stripped.startswith("/*"):
                                 continue
                             if SQL_UNSAFE_ADD_NOT_NULL.search(line):
-                                logic_report["status"] = "RETRY"
-                                logic_report["violations"].append(
+                                file_viols.append(
                                     f"UnsafeMigration in {file.name}: adding NOT NULL column without DEFAULT locks table at line {line_idx}"
                                 )
-                                logic_report["suggested_fixes"].append(
+                                file_fixes.append(
                                     "Provide DEFAULT value or add column as nullable first, backfill rows, then apply NOT NULL"
                                 )
                             if SQL_NON_CONCURRENT_INDEX.search(line):
-                                logic_report["status"] = "RETRY"
-                                logic_report["violations"].append(
+                                file_viols.append(
                                     f"UnsafeMigration in {file.name}: CREATE INDEX without CONCURRENTLY locks table against writes at line {line_idx}"
                                 )
-                                logic_report["suggested_fixes"].append(
+                                file_fixes.append(
                                     "Use CREATE INDEX CONCURRENTLY to avoid blocking table writes in production"
                                 )
                             if SQL_UNSAFE_DROP.search(line) and "-- allow-drop" not in line:
-                                logic_report["status"] = "RETRY"
-                                logic_report["violations"].append(
+                                file_viols.append(
                                     f"UnsafeMigration in {file.name}: DROP TABLE/COLUMN risks immediate data loss and downtime at line {line_idx}"
                                 )
-                                logic_report["suggested_fixes"].append(
+                                file_fixes.append(
                                     "Follow Rule 14 expand/contract pattern: deprecate column/table in release N, remove in release N+1"
                                 )
                             if SQL_UNSAFE_ALTER_TYPE.search(line):
-                                logic_report["status"] = "RETRY"
-                                logic_report["violations"].append(
+                                file_viols.append(
                                     f"UnsafeMigration in {file.name}: altering column type directly causes table rewrite lock at line {line_idx}"
                                 )
-                                logic_report["suggested_fixes"].append(
+                                file_fixes.append(
                                     "Add new column with target type additively, backfill data, and switch reads asynchronously"
                                 )
             except Exception as read_err:
                 logic_report["details"][f"{file.name}_read_notice"] = str(read_err)
+
+        if file_viols:
+            logic_report["status"] = "RETRY"
+        logic_report["violations"].extend(file_viols)
+        logic_report["suggested_fixes"].extend(file_fixes)
+
+        if use_cache and not test_mode and file_sha:
+            cache[cache_key] = {
+                "sha256": file_sha,
+                "status": "RETRY" if file_viols else "PASS",
+                "violations": file_viols,
+                "suggested_fixes": file_fixes
+            }
+            cache_dirty = True
+
+    if cache_dirty and use_cache and not test_mode:
+        try:
+            with open(cache_path, "w", encoding="utf-8") as cf:
+                json.dump(cache, cf, indent=2)
+        except Exception as cache_err:
+            sys.stderr.write(f"[critic_cache] Notice: failed to write cache: {cache_err}\n")
 
     # 3. Check for any unresolved syntax errors cached from PostToolUse hooks
     if check_syntax:
@@ -493,6 +673,21 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all")
         except Exception as drift_err:
             logic_report["details"]["api_contract_notice"] = str(drift_err)
 
+    # 5. Check for documentation loss, comment stripping, and KISS diff violations
+    check_diff = submode in ["all", "diff", "logic"]
+    if check_diff and audit_diff_guard and not test_mode:
+        try:
+            ws_target = target_path if 'target_path' in locals() and target_path.is_dir() else Path.cwd()
+            diff_res = audit_diff_guard(ws_target, specific_files=files_to_check if target and target != "." else None)
+            if diff_res.get("violations"):
+                logic_report["status"] = "RETRY"
+                logic_report["violations"].extend(diff_res["violations"])
+                logic_report["suggested_fixes"].extend(diff_res.get("suggested_fixes", []))
+            if diff_res.get("details"):
+                logic_report["details"]["diff_guard"] = diff_res["details"]
+        except Exception as dg_err:
+            logic_report["details"]["diff_guard_notice"] = str(dg_err)
+
     if logic_report["status"] == "PASS" and check_syntax:
         clear_last_syntax_error()
 
@@ -507,6 +702,14 @@ def audit_visual_qa(target: str, test_mode: bool = False) -> dict:
         "visual_artifacts": {},
         "warnings": []
     }
+
+    if not test_mode and target:
+        tp = Path(target)
+        if tp.is_file() and tp.suffix.lower() in [
+            ".py", ".go", ".rs", ".java", ".c", ".cpp", ".sql", ".sh", ".bash",
+            ".zsh", ".ps1", ".md", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"
+        ]:
+            return visual_report
 
     visual_qa_script = SCRIPTS_DIR / "visual_qa.py"
 
@@ -556,7 +759,7 @@ def audit_visual_qa(target: str, test_mode: bool = False) -> dict:
 
     return visual_report
 
-def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
+def run_critic_audit(mode: str, target: str, test_mode: bool = False, use_cache: bool = True) -> dict:
     report = {
         "mode": mode,
         "target": "synthetic_test" if test_mode else target,
@@ -567,7 +770,7 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
 
     # 1. Logic & AST Critique
     if mode in ["logic", "all", "syntax", "security", "complexity", "semantic"]:
-        logic_res = audit_code_logic(target, test_mode=test_mode, submode=mode)
+        logic_res = audit_code_logic(target, test_mode=test_mode, submode=mode, use_cache=use_cache)
         if logic_res["status"] == "RETRY":
             report["status"] = "RETRY"
         report["violations"].extend(logic_res["violations"])
@@ -587,21 +790,46 @@ def run_critic_audit(mode: str, target: str, test_mode: bool = False) -> dict:
         if visual_res.get("warnings"):
             report["warnings"] = visual_res["warnings"]
 
+    if not test_mode and record_critic_run:
+        try:
+            ws = Path.cwd().resolve()
+            target_path = Path(target).resolve() if target else None
+            if not target_path or ws in target_path.parents or target_path == ws:
+                record_critic_run(
+                    status=report["status"],
+                    mode=mode,
+                    target=str(target_path) if target_path else ".",
+                    violations=report["violations"],
+                    workspace_dir=ws
+                )
+        except Exception as rec_err:
+            sys.stderr.write(f"[critic_loop] Notice: failed to record critic run: {rec_err}\n")
+
     return report
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Critic Loop Runner (Claude Opus 5.5 Standard)")
     parser.add_argument("--mode", choices=["logic", "visual", "syntax", "security", "complexity", "semantic", "all"], default="all", help="Critic evaluation mode")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
+    parser.add_argument("--no-cache", action="store_true", help="Bypass incremental file caching")
+    parser.add_argument("--clear-cache", action="store_true", help="Clear incremental AST critic cache")
     parser.add_argument("--target", dest="target_flag", default=None, help="Target file or directory (flag form)")
     parser.add_argument("target", nargs="?", default="", help="File or directory target (positional)")
 
     args = parser.parse_args()
+
+    if args.clear_cache:
+        clear_critic_cache()
+        print(json.dumps({"status": "PASS", "cleared_cache": True}))
+        sys.exit(0)
+
     is_test = args.test_mode or (args.target == "--test-mode") or (args.target_flag == "--test-mode")
     raw_target = args.target_flag if args.target_flag is not None else args.target
     target = "" if is_test else raw_target
 
-    report = run_critic_audit(args.mode, target, test_mode=is_test)
+    use_cache = not args.no_cache
+
+    report = run_critic_audit(args.mode, target, test_mode=is_test, use_cache=use_cache)
     print(json.dumps(report, indent=2))
     sys.exit(0 if report["status"] == "PASS" else 1)
 

@@ -27,6 +27,7 @@ flowchart TD
 
 ### Phase 1: Rapid Design & Algorithmic Bounds Gate (Inspired by `/brainstorm`)
 - **Repository Context Map**: Generate high-density symbol map using `python3 scripts/repo_map.py . --max-tokens 2048` to establish context topology.
+- **Cross-File Symbol Impact & Call-Graph**: Run `python3 scripts/symbol_impact.py <symbol>` to trace all definitions, callers, and references across the workspace before modifying signatures.
 - **Semantic Symbol Slicing**: Use `python3 scripts/semantic_slice.py <file> --symbol <name>` to extract targeted functions and classes without loading full files.
 - **Formal Invariant Matrix**: Tabulate pre-conditions, post-conditions, and invariants before code writing.
 - **Zero Filler (ASD-STE100)**: Start immediately with structured technical analysis.
@@ -65,9 +66,10 @@ flowchart TD
 ### Phase 5: Adversarial Audit & Self-Healing Loop (`claude-critic`, `visual-qa`)
 - **Tier-1 Deterministic Fast-Path Audit**:
   - Pre-flight static audit: Execute `python3 scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, quadratic traps, exposed secrets, unreleased mutexes, and dangerous migration patterns in sub-second time.
+  - AST diff hygiene & comment preservation: Execute `python3 scripts/diff_guard.py` to ensure zero comment stripping and no KISS complexity blowups against HEAD.
   - Public API contract drift gate: Execute `python3 scripts/api_contract_guard.py --target .` to ensure zero breaking changes in exported signatures.
   - If Tier-1 fails, apply minimal surgical fixes immediately without spending roundtrips on LLM subagents.
-- **Tier-2 Adversarial Cognitive Audit**: Invoke `claude-critic` across the 7 Opus pillars (Invariants & KISS/YAGNI, Concurrency, OWASP Top 10, Type Safety, Boundary Conditions, Migrations).
+- **Tier-2 Adversarial Cognitive Audit**: When necessary, invoke `claude-critic` (always configured with `model: inherit`, never `model: pro` to prevent latency bottlenecks) across the 7 Opus pillars.
 - **Frontend / UI & Accessibility**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and automated WCAG 2.1 AA accessibility checks reviewed via `visual-qa-critic`.
 - **Closed-Loop Resolution**:
   - If the critic returns `RETRY`, parse all reported violations and suggested fixes.
