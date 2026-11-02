@@ -5,6 +5,8 @@ description: Dual-viewport Playwright visual QA inspector for desktop (1280x800)
 
 # 👁️ Visual QA Skill (Dual-Viewport Playwright Inspector)
 
+> **Paths**: `scripts/` is the suite folder, not your project: `~/.gemini/config/plugins/antigravity-dev-suite/scripts/`. On Windows use `py -3` instead of `python3`. The Stop gate runs the checks again when you finish.
+
 Use this skill whenever modifying or creating user interfaces, web layouts, HTML, CSS, React, Next.js, Vue, or Svelte components.
 
 ---
@@ -25,9 +27,9 @@ Every frontend change must be visually inspected and proven across two standard 
 ### Method 1: Built-in Python Playwright Runner
 Execute the integrated cross-platform visual QA script:
 ```bash
-python3 scripts/visual_qa.py http://localhost:5173
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/visual_qa.py http://localhost:5173
 # Or for static HTML files:
-python3 scripts/visual_qa.py path/to/page.html
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/visual_qa.py path/to/page.html
 ```
 
 ### Method 2: Playwright MCP Tools

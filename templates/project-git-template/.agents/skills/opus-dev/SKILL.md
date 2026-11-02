@@ -5,6 +5,8 @@ description: Unified end-to-end autonomous engineering meta-engine. Coordinates 
 
 # 🚀 Claude Opus 5.5 Unified Engineering Meta-Engine (`/opus-dev`)
 
+> **Paths**: `scripts/` is the suite folder, not your project: `~/.gemini/config/plugins/antigravity-dev-suite/scripts/`. On Windows use `py -3` instead of `python3`. The Stop gate runs the checks again when you finish.
+
 Use this skill when developing a feature, bug fix, refactor, or complete module under the full **Claude Opus 5.5 Standard**. It autonomously executes a self-healing engineering loop with strict **KISS & YAGNI enforcement**, running adversarial reviews and surgical fixes in a closed loop until achieving a clean `PASS` verdict.
 
 ---
@@ -26,9 +28,9 @@ flowchart TD
 ---
 
 ### Phase 1: Rapid Design & Algorithmic Bounds Gate (Inspired by `/brainstorm`)
-- **Repository Context Map**: Generate high-density symbol map using `python3 scripts/repo_map.py . --max-tokens 2048` to establish context topology.
-- **Cross-File Symbol Impact & Call-Graph**: Run `python3 scripts/symbol_impact.py <symbol>` to trace all definitions, callers, and references across the workspace before modifying signatures.
-- **Semantic Symbol Slicing**: Use `python3 scripts/semantic_slice.py <file> --symbol <name>` to extract targeted functions and classes without loading full files.
+- **Repository Context Map**: Generate high-density symbol map using `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/repo_map.py . --max-tokens 2048` to establish context topology.
+- **Cross-File Symbol Impact & Call-Graph**: Run `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/symbol_impact.py <symbol>` to trace all definitions, callers, and references across the workspace before modifying signatures.
+- **Semantic Symbol Slicing**: Use `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/semantic_slice.py <file> --symbol <name>` to extract targeted functions and classes without loading full files.
 - **Formal Invariant Matrix**: Tabulate pre-conditions, post-conditions, and invariants before code writing.
 - **Zero Filler (ASD-STE100)**: Start immediately with structured technical analysis.
 - **KISS & YAGNI Check**: Choose the simplest design with the minimum number of moving parts. Avoid speculative abstractions.
@@ -51,30 +53,30 @@ flowchart TD
   - Implement Structured Concurrency with cancellation token propagation and bound worker pools.
   - Handle resource lifecycles (`try...finally`, `with`, `defer`).
   - Eliminate mutable default arguments (`def fn(x=[])`).
-  - Execute property-based fuzzing tests (`python3 scripts/auto_debug_runner.py --fuzz`).
-  - Verify mutation resistance on modified files: `python3 scripts/auto_debug_runner.py --mutation --diff`.
+  - Execute property-based fuzzing tests (`python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --fuzz`).
+  - Verify mutation resistance on modified files: `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --mutation --diff`.
 
 ### Phase 4: Autonomous Closed-Loop Auto-Debug, Typecheck & Race Gate (`/auto-debug`, `/benchmark`)
-- Execute test runner autonomously (`python3 scripts/auto_debug_runner.py --run-tests`).
-- Execute static typecheck (`python3 scripts/auto_debug_runner.py --typecheck`).
-- Execute concurrency race detector (`python3 scripts/auto_debug_runner.py --race`).
-- Detect non-deterministic test races: `python3 scripts/auto_debug_runner.py --detect-flaky`.
+- Execute test runner autonomously (`python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --run-tests`).
+- Execute static typecheck (`python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --typecheck`).
+- Execute concurrency race detector (`python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --race`).
+- Detect non-deterministic test races: `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --detect-flaky`.
 - Validate database migrations against Rule 14 zero-downtime expand/contract requirements.
 - Use context window token hygiene: condense voluminous passing test output and isolate AST failure traces.
-- If performance regressions occur, run benchmark runner (`python3 scripts/auto_debug_runner.py --benchmark`).
+- If performance regressions occur, run benchmark runner (`python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --benchmark`).
 
 ### Phase 5: Adversarial Audit & Self-Healing Loop (`claude-critic`, `visual-qa`)
 - **Tier-1 Deterministic Fast-Path Audit**:
-  - Pre-flight static audit: Execute `python3 scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, quadratic traps, exposed secrets, unreleased mutexes, and dangerous migration patterns in sub-second time.
-  - AST diff hygiene & comment preservation: Execute `python3 scripts/diff_guard.py` to ensure zero comment stripping and no KISS complexity blowups against HEAD.
-  - Public API contract drift gate: Execute `python3 scripts/api_contract_guard.py --target .` to ensure zero breaking changes in exported signatures.
+  - Pre-flight static audit: Execute `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/critic_loop.py --mode all --target .` to catch syntax faults, bracket imbalances, quadratic traps, exposed secrets, unreleased mutexes, and dangerous migration patterns in sub-second time.
+  - AST diff hygiene & comment preservation: Execute `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/diff_guard.py` to ensure zero comment stripping and no KISS complexity blowups against HEAD.
+  - Public API contract drift gate: Execute `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/api_contract_guard.py --target .` to ensure zero breaking changes in exported signatures.
   - If Tier-1 fails, apply minimal surgical fixes immediately without spending roundtrips on LLM subagents.
 - **Tier-2 Adversarial Cognitive Audit**: When necessary, invoke `claude-critic` (always configured with `model: inherit`, never `model: pro` to prevent latency bottlenecks) across the 7 Opus pillars.
 - **Frontend / UI & Accessibility**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and automated WCAG 2.1 AA accessibility checks reviewed via `visual-qa-critic`.
 - **Closed-Loop Resolution**:
-  - If the critic returns `RETRY`, parse all reported violations and suggested fixes.
-  - Apply minimal surgical fixes to codebase and test suite.
-  - Re-run test suite and re-audit via `claude-critic`.
-  - **Repeat the loop until the critic returns status `PASS` with 0 violations.**
-- **Delivery**: Present conclusive terminal verification evidence and final clean critic verdict in ASD-STE100 format.
+  - Run the full gate: `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/agy_hook.py check`.
+  - If it reports `RESULT: FAIL`, fix each listed problem at its root cause and run it again.
+  - **Repeat until the gate prints `RESULT: PASS`.** The Stop hook runs the same gate and blocks completion while it fails.
+  - Never delete, skip or loosen a test, and never silence a finding with `# nosec`, to get a PASS.
+- **Delivery**: Paste the real final gate output (`RESULT: PASS` and the checks run). A claim without output is not evidence.
 - **Session Transfer & Handoff**: If context budget is reached or session concludes, run `/handoff` to serialize the briefing and telemetry for the subsequent session.

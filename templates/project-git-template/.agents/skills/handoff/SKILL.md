@@ -5,6 +5,8 @@ description: Compact and serialize the current conversation state into a structu
 
 # 📋 Session Handoff Pipeline (`/handoff`)
 
+> **Paths**: `scripts/` is the suite folder, not your project: `~/.gemini/config/plugins/antigravity-dev-suite/scripts/`. On Windows use `py -3` instead of `python3`. The Stop gate runs the checks again when you finish.
+
 Use this skill when completing an agent session, hitting context boundaries, or transferring execution to a fresh agent, another model, or a parallel worktree. It generates a portable, zero-fluff Markdown handoff document in the operating system temporary directory (`$TMPDIR`) without polluting the workspace git repository.
 
 ---
@@ -13,7 +15,7 @@ Use this skill when completing an agent session, hitting context boundaries, or 
 
 ```mermaid
 flowchart TD
-    H0["0. Inspect Context Occupancy (python3 scripts/handoff.py --stats)"] --> H1["1. User Triggers /handoff [goal]"]
+    H0["0. Inspect Context Occupancy (python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/handoff.py --stats)"] --> H1["1. User Triggers /handoff [goal]"]
     H1 --> H2["2. Inspect Active Git State & Telemetry"]
     H2 --> H3["3. Scrub Sensitive Keys & Secrets (OWASP Rule 7)"]
     H3 --> H4["4. Generate ASD-STE100 Briefing in OS Tempdir"]
@@ -26,9 +28,9 @@ flowchart TD
 ### Step 0: Inspect Context Occupancy (Pre-Flight)
 Check current token telemetry and context window utilization before ending a session:
 ```bash
-python3 scripts/handoff.py --stats
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/handoff.py --stats
 # or via auto debug runner:
-python3 scripts/auto_debug_runner.py --context
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --context
 ```
 | Occupancy Band | Token Range | Status | Action Required |
 | :--- | :--- | :--- | :--- |
@@ -45,11 +47,11 @@ python3 scripts/auto_debug_runner.py --context
 ### Step 2: Deterministic Telemetry & Context Extraction
 Execute the deterministic handoff runner:
 ```bash
-python3 scripts/handoff.py "<target-goal>" --summary "<implementation-notes>"
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/handoff.py "<target-goal>" --summary "<implementation-notes>"
 ```
 Or via the auto debug runner:
 ```bash
-python3 scripts/auto_debug_runner.py --handoff "<target-goal>"
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --handoff "<target-goal>"
 ```
 
 The script autonomously:

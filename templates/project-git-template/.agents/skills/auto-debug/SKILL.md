@@ -5,6 +5,8 @@ description: Autonomous test execution, stacktrace parsing, and closed-loop auto
 
 # 🔧 Auto-Debug Skill (Autonomous Closed-Loop Debugger)
 
+> **Paths**: `scripts/` is the suite folder, not your project: `~/.gemini/config/plugins/antigravity-dev-suite/scripts/`. On Windows use `py -3` instead of `python3`. The Stop gate runs the checks again when you finish.
+
 Use this skill to autonomously execute the project's test suite, static typechecker, race detector, fuzz harness, capture failures, and fix them in a closed loop before marking a task complete.
 
 ---
@@ -63,35 +65,32 @@ Use the diagnostic and test execution CLI utility:
 
 ```bash
 # Detect project framework and recommended commands
-python3 scripts/auto_debug_runner.py --detect
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --detect
 
 # Run detected test command autonomously
-python3 scripts/auto_debug_runner.py --run-tests
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --run-tests
 
 # Run static typecheck command
-python3 scripts/auto_debug_runner.py --typecheck
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --typecheck
 
 # Run concurrency race detection
-python3 scripts/auto_debug_runner.py --race
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --race
 
 # Run property-based fuzzing tests
-python3 scripts/auto_debug_runner.py --fuzz
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --fuzz
 
 # Run test coverage analyzer
-python3 scripts/auto_debug_runner.py --coverage
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --coverage
 
 # Run mutation testing suite
-python3 scripts/auto_debug_runner.py --mutation
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --mutation
 
 # Install pre-commit Git hook for local repo
-python3 scripts/auto_debug_runner.py --install-git-hooks
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --install-git-hooks
 
 # Validate single file syntax and bracket balance
-python3 scripts/auto_debug_runner.py --check <path/to/file>
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --check <path/to/file>
 
-# Read cached syntax error from recent hook execution
-python3 scripts/auto_debug_runner.py --last-error
-
-# Clear cached syntax error
-python3 scripts/auto_debug_runner.py --clear-last-error
+# Run the full verification gate (same checks as the Stop hook)
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/agy_hook.py check
 ```

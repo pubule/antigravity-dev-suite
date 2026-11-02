@@ -11,6 +11,16 @@ $ConfigFile = Join-Path $ConfigDir "config.json"
 
 Write-Host "=== Uninstalling Antigravity Dev Suite on Windows ===" -ForegroundColor Yellow
 
+# 0. Remove hooks from %USERPROFILE%\.gemini\config\hooks.json (other hooks are kept)
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+foreach ($cand in @("py -3", "python", "python3")) {
+    $parts = $cand.Split(" ")
+    if (-not (Get-Command $parts[0] -ErrorAction SilentlyContinue)) { continue }
+    $extra = @($parts | Select-Object -Skip 1)
+    & $parts[0] @extra (Join-Path $ScriptDir "scripts\setup_hooks.py") uninstall
+    if ($LASTEXITCODE -eq 0) { break }
+}
+
 # 1. Remove plugin junction
 if (Test-Path $TargetPluginDir) {
     cmd /c rmdir "$TargetPluginDir" 2>$null

@@ -2,6 +2,7 @@
 # Antigravity Dev Suite — 1-Click Installer for Windows (PowerShell)
 # Claude Opus 5.5 Coding Standard & Cross-Platform Engine
 # ==============================================================================
+param([switch]$WithBrowsers)
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -33,21 +34,37 @@ foreach ($dir in $dirsToCreate) {
 
 # 3. Setup Python dependencies & Playwright Chromium
 Write-Host "[3/5] Verifying Playwright & Python environment..." -ForegroundColor Yellow
-$PythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } elseif (Get-Command py -ErrorAction SilentlyContinue) { "py" } elseif (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "" }
+# Find a real Python 3.9+ (skip the Microsoft Store "python" alias, which does not run)
+$PythonCmd = $null
+$PythonArgs = @()
+foreach ($cand in @("py -3", "python", "python3")) {
+    $parts = $cand.Split(" ")
+    if (-not (Get-Command $parts[0] -ErrorAction SilentlyContinue)) { continue }
+    $extra = @($parts | Select-Object -Skip 1)
+    try {
+        & $parts[0] @extra -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)" *> $null
+        if ($LASTEXITCODE -eq 0) { $PythonCmd = $parts[0]; $PythonArgs = $extra; break }
+    } catch { }
+}
+if (-not $PythonCmd) {
+    Write-Host "  ❌ Python 3.9+ not found. Install it from https://www.python.org/downloads/ and run this script again." -ForegroundColor Red
+    exit 1
+}
 
-if ($PythonCmd) {
-    & $PythonCmd -c "import playwright" 2>$null
+# Playwright is optional (visual QA only): never let it abort the install.
+try {
+    & $PythonCmd @PythonArgs -c "import playwright" *> $null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ⏳ Installing Playwright python module..." -ForegroundColor Gray
-        & $PythonCmd -m pip install --quiet playwright
+        & $PythonCmd @PythonArgs -m pip install --quiet --timeout 20 --retries 1 playwright
     } else {
         Write-Host "  ✔ Playwright python module is already installed." -ForegroundColor Green
     }
-    
-    # Try playwright install chromium
-    & $PythonCmd -m playwright install chromium 2>$null
-} else {
-    Write-Host "  ⚠ Python not found in PATH. Please install Python 3.10+." -ForegroundColor Red
+    if ($WithBrowsers -or $env:AGY_INSTALL_BROWSERS -eq "1") {
+        & $PythonCmd @PythonArgs -m playwright install chromium *> $null
+    }
+} catch {
+    Write-Host "  ℹ Playwright could not be installed. Visual QA will run in fallback mode." -ForegroundColor Gray
 }
 
 # 4. Create Plugin Junction / Link
@@ -86,10 +103,13 @@ try {
     Write-Host "  ⚠ Could not parse config.json. Antigravity will load plugin by default." -ForegroundColor Gray
 }
 
-# 5. Run Self-Test
-Write-Host "[5/5] Running Self-Verification Test..." -ForegroundColor Yellow
-if ($PythonCmd) {
-    & $PythonCmd (Join-Path $ScriptDir "tests\test_plugin_suite.py")
+# 5. Register hooks globally (IDE + CLI) and run the doctor
+Write-Host "[5/5] Registering hooks and running the installation doctor..." -ForegroundColor Yellow
+& $PythonCmd @PythonArgs (Join-Path $ScriptDir "scripts\setup_hooks.py") install
+& $PythonCmd @PythonArgs (Join-Path $ScriptDir "scripts\agy_hook.py") doctor
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ The doctor found problems (see FAIL lines above)." -ForegroundColor Red
+    exit 1
 }
 
 Write-Host ""

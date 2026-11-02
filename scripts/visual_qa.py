@@ -5,6 +5,8 @@ Captures desktop (1280x800) and mobile (375x667) screenshots, JS console errors,
 Compatible with macOS, Linux, and Windows 10/11.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import json

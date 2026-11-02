@@ -17,3 +17,6 @@ ENV/
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Critic cache
+.agy_cache/

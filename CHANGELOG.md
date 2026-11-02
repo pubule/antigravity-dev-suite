@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.17.0] — 2026-11-02
+
+### 🛡️ Verification that actually runs
+An audit showed that agy's checks never fired in real sessions. This release fixes the root causes.
+
+- **Hooks match the real Antigravity tools.** Matchers now use `write_to_file`, `replace_file_content` and `multi_replace_file_content` (the old `write_file|edit_file` matched nothing), and arguments are read from `TargetFile`, `CodeContent`, `ReplacementContent` and `ReplacementChunks`.
+- **New single hook entry point `scripts/agy_hook.py`** for `SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation` and `Stop`, plus `check` and `doctor` commands.
+- **Stop gate runs the checks itself.** It no longer trusts records in `/tmp` that any run (or the agent) could write. On every changed file it runs syntax validation, the static critic, a test-first rule, typecheck/lint when configured, and the test suite, and returns the full report as the `reason`.
+- **Stop gate is always on.** It gated only `terminationReason == "NO_TOOL_CALL"`, while Antigravity sends values such as `model_stop`. Now only `max_steps_exceeded` and `error` skip the gate.
+- **No more blind spots.** Files inside new directories (`git status -uall`) and changes committed since the session started are checked. Results are cached per content fingerprint; a block limit applies only when nothing changes.
+- **Syntax errors reach the model.** PostToolUse output must be `{}`, so errors are now fed back through `PreInvocation` `injectSteps`.
+- **Bypasses are blocked.** The guard denies `--no-verify`, `git commit -n`, `AGY_*` gate variables, `core.hooksPath`, writes to gate state and `.agents/agy.json`, and catches more `rm` and force-push variants.
+- **Fail-closed.** A crash in the gate blocks with the error instead of silently allowing.
+- **Python 3.9 support** (macOS system Python): every script now imports under 3.9 (`from __future__ import annotations`; missing `logging` import fixed).
+- **Cross-platform install and update.** `scripts/setup_hooks.py` writes the hooks into `~/.gemini/config/hooks.json` (IDE + CLI) with absolute interpreter paths, keeps other hooks, and uses 8.3 paths on Windows to avoid quoting issues in PowerShell. New `update.sh` / `update.ps1`. The installers run `agy_hook.py doctor`. The root `hooks.json` with fragile path discovery is removed.
+- **Pre-commit hook** runs the same gate (`agy_hook.py check`); typecheck failures are no longer ignored.
+- **Rules and skills.** `rules/AGENTS.md` starts with the enforced checks and is shorter; skills call scripts by their installed path instead of a project-relative `scripts/`; `/code-review` and `claude-critic` use an independent reviewer with only the diff.
+- **Tests.** New `tests/test_hooks_integration.py` uses real-format payloads (22 tests).
+
+---
+
 ## [1.16.0] — 2026-11-01
 
 ### 🚀 Highlights & Flash 3.8 / Claude Opus 5.5 Enterprise Capabilities

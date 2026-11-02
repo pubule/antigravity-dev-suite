@@ -14,6 +14,8 @@ Settings (~/.gemini/antigravity-cli/settings.json):
     }
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import json

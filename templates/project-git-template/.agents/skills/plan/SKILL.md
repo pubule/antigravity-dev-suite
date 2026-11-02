@@ -5,6 +5,8 @@ description: Decompose complex features or refactors into atomic, verifiable mil
 
 # 🗺️ Engineering Plan & Milestone Decomposition (`/plan`)
 
+> **Paths**: `scripts/` is the suite folder, not your project: `~/.gemini/config/plugins/antigravity-dev-suite/scripts/`. On Windows use `py -3` instead of `python3`. The Stop gate runs the checks again when you finish.
+
 Use this skill to break down complex tasks, multi-file refactors, or new feature additions into atomic, verifiable subtasks before execution.
 
 ---
@@ -19,8 +21,8 @@ flowchart TD
 ```
 
 ### 1. File & Dependency Mapping
-- Extract the codebase symbol topology using `python3 scripts/repo_map.py . --max-tokens 2048`.
-- Trace cross-file call-graphs and dependents using `python3 scripts/symbol_impact.py <symbol>` to uncover all call-sites before modifying signatures.
+- Extract the codebase symbol topology using `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/repo_map.py . --max-tokens 2048`.
+- Trace cross-file call-graphs and dependents using `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/symbol_impact.py <symbol>` to uncover all call-sites before modifying signatures.
 - List the exact files to create or modify:
 - **Created**: e.g., `src/auth/jwt_provider.py`, `tests/test_jwt_provider.py`
 - **Modified**: e.g., `src/config.py`, `src/routes/api.py`
