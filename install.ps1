@@ -56,7 +56,7 @@ try {
     & $PythonCmd @PythonArgs -c "import playwright" *> $null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ⏳ Installing Playwright python module..." -ForegroundColor Gray
-        & $PythonCmd @PythonArgs -m pip install --quiet playwright
+        & $PythonCmd @PythonArgs -m pip install --quiet --timeout 20 --retries 1 playwright
     } else {
         Write-Host "  ✔ Playwright python module is already installed." -ForegroundColor Green
     }

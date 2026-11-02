@@ -44,9 +44,9 @@ if "${PYTHON_BIN}" -c "import playwright" >/dev/null 2>&1; then
   echo "  ✔ Playwright python module is already installed."
 else
   echo "  ⏳ Installing Playwright python module..."
-  "${PYTHON_BIN}" -m pip install --quiet playwright 2>/dev/null \
-    || "${PYTHON_BIN}" -m pip install --user --quiet playwright 2>/dev/null \
-    || "${PYTHON_BIN}" -m pip install --break-system-packages --quiet playwright 2>/dev/null \
+  "${PYTHON_BIN}" -m pip install --quiet --timeout 20 --retries 1 playwright 2>/dev/null \
+    || "${PYTHON_BIN}" -m pip install --user --quiet --timeout 20 --retries 1 playwright 2>/dev/null \
+    || "${PYTHON_BIN}" -m pip install --break-system-packages --quiet --timeout 20 --retries 1 playwright 2>/dev/null \
     || echo "  ℹ Notice: Playwright python module could not be installed automatically. Visual QA will run in fallback mode."
 fi
 
