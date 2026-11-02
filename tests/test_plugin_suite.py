@@ -3596,6 +3596,10 @@ def test_handoff_generator():
 
     # 7. Custom Statusline Renderer Validation
     import statusline
+    from handoff import get_model_context_threshold
+    assert get_model_context_threshold("Gemini 3.8 Flash (High)") == 1000000
+    assert get_model_context_threshold("Claude 3.7 Sonnet") == 200000
+
     custom_line = statusline.render_statusline({
         "model": {"display_name": "Gemini 3.8 Flash"},
         "workspace": {"current_dir": "/mock/dir"},
@@ -3606,6 +3610,19 @@ def test_handoff_generator():
     })
     assert "Gemini 3.8 Flash" in custom_line
     assert "35.0%" in custom_line or "dir" in custom_line
+
+    # Verify brand-new session with 100% remaining does not trigger stale fallback or CRITICAL
+    fresh_line = statusline.render_statusline({
+        "model": {"display_name": "Gemini 3.8 Flash (High)"},
+        "workspace": {"current_dir": "/mock/dir"},
+        "context_window": {
+            "remaining_percentage": 100.0,
+            "current_usage": {"input_tokens": 0}
+        }
+    })
+    assert "0.0%" in fresh_line
+    assert "OK" in fresh_line
+    assert "CRITICAL" not in fresh_line
 
     code_sl, out_sl, err_sl = run_script("auto_debug_runner.py", ["--statusline"])
     assert code_sl == 0, f"auto_debug_runner.py --statusline failed: {err_sl}"

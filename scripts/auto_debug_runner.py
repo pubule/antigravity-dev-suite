@@ -12,8 +12,10 @@ import os
 import json
 import logging
 import time
+import hashlib
 import tempfile
 import subprocess
+import logging
 from pathlib import Path
 
 # Add current scripts directory to sys.path for robust relative import
@@ -49,8 +51,14 @@ def safe_git_env() -> dict:
 def get_diagnostic_file_path() -> Path:
     return Path(tempfile.gettempdir()) / DIAGNOSTIC_FILE_NAME
 
-def get_test_record_file_path() -> Path:
-    return Path(tempfile.gettempdir()) / TEST_RECORD_FILE_NAME
+def get_workspace_slug(workspace_dir: str | Path | None = None) -> str:
+    """Computes short deterministic hash for workspace directory isolation in temp store."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    return hashlib.sha256(str(ws).encode("utf-8")).hexdigest()[:10]
+
+def get_test_record_file_path(workspace_dir: str | Path | None = None) -> Path:
+    slug = get_workspace_slug(workspace_dir)
+    return Path(tempfile.gettempdir()) / f"agy_last_test_run_{slug}.json"
 
 def get_last_syntax_error() -> dict | None:
     """Reads the last recorded syntax error from the temporary diagnostic cache."""
@@ -77,72 +85,111 @@ def clear_last_syntax_error() -> bool:
 def record_test_run(status: str, command: str, workspace_dir: str | Path | None = None) -> None:
     """Persists structured outcome of the latest test execution for stop gate auditing."""
     ws = Path(workspace_dir or Path.cwd()).resolve()
+    payload = {
+        "status": status,
+        "command": command,
+        "workspace": str(ws),
+        "timestamp": time.time()
+    }
     try:
-        rec_file = get_test_record_file_path()
+        rec_file = get_test_record_file_path(ws)
         with open(rec_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "status": status,
-                "command": command,
-                "workspace": str(ws),
-                "timestamp": time.time()
-            }, f, indent=2)
+            json.dump(payload, f, indent=2)
+        legacy_file = Path(tempfile.gettempdir()) / TEST_RECORD_FILE_NAME
+        with open(legacy_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
     except (OSError, PermissionError) as write_err:
         logging.getLogger(__name__).debug("Unable to persist test run record: %s", write_err)
 
-def get_last_test_run() -> dict | None:
-    """Reads the last recorded test run outcome."""
-    rec_file = get_test_record_file_path()
+def get_last_test_run(workspace_dir: str | Path | None = None) -> dict | None:
+    """Reads the last recorded test run outcome with workspace isolation."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    rec_file = get_test_record_file_path(ws)
     if rec_file.is_file():
         try:
             with open(rec_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, json.JSONDecodeError) as read_err:
-            logging.getLogger(__name__).debug("Unable to read test run record: %s", read_err)
-            return None
+            logging.getLogger(__name__).debug("Unable to read scoped test record: %s", read_err)
+    legacy_file = Path(tempfile.gettempdir()) / TEST_RECORD_FILE_NAME
+    if legacy_file.is_file():
+        try:
+            with open(legacy_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("workspace") == str(ws):
+                    return data
+        except (OSError, json.JSONDecodeError) as read_err:
+            logging.getLogger(__name__).debug("Unable to read legacy test record: %s", read_err)
     return None
 
-def get_critic_record_file_path() -> Path:
-    return Path(tempfile.gettempdir()) / CRITIC_RECORD_FILE_NAME
+def get_critic_record_file_path(workspace_dir: str | Path | None = None) -> Path:
+    slug = get_workspace_slug(workspace_dir)
+    return Path(tempfile.gettempdir()) / f"agy_last_critic_run_{slug}.json"
 
 def record_critic_run(status: str, mode: str, target: str, violations: list, workspace_dir: str | Path | None = None) -> None:
     """Persists structured outcome of the latest critic loop evaluation for stop gate auditing."""
     ws = Path(workspace_dir or Path.cwd()).resolve()
+    payload = {
+        "status": status,
+        "mode": mode,
+        "target": str(target),
+        "workspace": str(ws),
+        "timestamp": time.time(),
+        "violations_count": len(violations)
+    }
     try:
-        rec_file = get_critic_record_file_path()
+        rec_file = get_critic_record_file_path(ws)
         with open(rec_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "status": status,
-                "mode": mode,
-                "target": str(target),
-                "workspace": str(ws),
-                "timestamp": time.time(),
-                "violations_count": len(violations)
-            }, f, indent=2)
+            json.dump(payload, f, indent=2)
+        legacy_file = Path(tempfile.gettempdir()) / CRITIC_RECORD_FILE_NAME
+        with open(legacy_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
     except (OSError, PermissionError) as write_err:
         logging.getLogger(__name__).debug("Unable to persist critic run record: %s", write_err)
 
-def get_last_critic_run() -> dict | None:
-    """Reads the last recorded critic loop evaluation outcome."""
-    rec_file = get_critic_record_file_path()
+def get_last_critic_run(workspace_dir: str | Path | None = None) -> dict | None:
+    """Reads the last recorded critic loop evaluation outcome with workspace isolation."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    rec_file = get_critic_record_file_path(ws)
     if rec_file.is_file():
         try:
             with open(rec_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, json.JSONDecodeError) as read_err:
-            logging.getLogger(__name__).debug("Unable to read critic run record: %s", read_err)
-            return None
+            logging.getLogger(__name__).debug("Unable to read scoped critic record: %s", read_err)
+    legacy_file = Path(tempfile.gettempdir()) / CRITIC_RECORD_FILE_NAME
+    if legacy_file.is_file():
+        try:
+            with open(legacy_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("workspace") == str(ws):
+                    return data
+        except (OSError, json.JSONDecodeError) as read_err:
+            logging.getLogger(__name__).debug("Unable to read legacy critic record: %s", read_err)
     return None
 
-def clear_last_critic_run() -> bool:
-    """Clears the cached critic run record."""
-    rec_file = get_critic_record_file_path()
+def clear_last_critic_run(workspace_dir: str | Path | None = None) -> bool:
+    """Clears the cached critic run record for the workspace."""
+    ws = Path(workspace_dir or Path.cwd()).resolve()
+    rec_file = get_critic_record_file_path(ws)
+    cleared = False
     if rec_file.is_file():
         try:
             rec_file.unlink()
-            return True
-        except (OSError, PermissionError):
-            return False
-    return False
+            cleared = True
+        except (OSError, PermissionError) as unl_err:
+            logging.getLogger(__name__).debug("Unable to unlink scoped critic record: %s", unl_err)
+    legacy_file = Path(tempfile.gettempdir()) / CRITIC_RECORD_FILE_NAME
+    if legacy_file.is_file():
+        try:
+            with open(legacy_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if data.get("workspace") == str(ws):
+                    legacy_file.unlink()
+                    cleared = True
+        except Exception as unl_err:
+            logging.getLogger(__name__).debug("Unable to unlink legacy critic record: %s", unl_err)
+    return cleared
 
 def condense_test_output(raw_stdout: str, raw_stderr: str, max_lines: int = 30) -> str:
     """
@@ -1205,7 +1252,9 @@ def handle_cli_mode() -> bool:
                 print(f"  - Total Prompt Tokens: {stats['total_prompt_tokens']:,} (Input: {stats['input_tokens']:,}, Cache: {stats['cache_read_tokens']:,})")
                 print(f"  - Output Tokens:       {stats['output_tokens']:,}")
                 print(f"  - Step Index:          {stats['step_index']}")
-                print(f"  - Occupancy (~100k):   {stats['occupancy_percentage']}% [{stats['status']}]")
+                thresh = stats.get("compaction_threshold", 1000000)
+                thresh_lbl = f"~{thresh // 1000}k" if thresh < 1000000 else f"~{thresh // 1000000}M"
+                print(f"  - Occupancy ({thresh_lbl}):   {stats['occupancy_percentage']}% [{stats['status']}]")
                 print(f"  - Recommendation:      {stats['recommendation']}")
             sys.exit(0)
         except Exception as e:

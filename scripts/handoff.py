@@ -133,13 +133,29 @@ def get_git_context(ws_dir: Path) -> Dict[str, Any]:
     return ctx
 
 
+def get_model_context_threshold(model_name: Optional[str] = None) -> int:
+    """Returns the context window compaction threshold based on model architecture. # safe-bounds"""
+    if not model_name:
+        model_name = os.getenv("ANTIGRAVITY_MODEL") or os.getenv("GEMINI_MODEL") or "gemini"
+    m = model_name.lower()
+    if "flash" in m or "gemini" in m:
+        return 1000000
+    if "claude" in m or "sonnet" in m or "opus" in m:
+        return 200000
+    if "gpt-4o" in m or "gpt-4" in m or "o1" in m or "o3" in m:
+        return 128000
+    return 1000000
+
+
 def get_context_occupancy(
     app_data_dir: Optional[str] = None,
-    conversation_id: Optional[str] = None
+    conversation_id: Optional[str] = None,
+    model_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """Extracts live context window occupancy and token telemetry from transcript. # safe-bounds"""
     app_data = Path(app_data_dir or os.getenv("ANTIGRAVITY_APP_DATA_DIR") or (Path.home() / ".gemini" / "antigravity-cli"))
     conv_id = conversation_id or os.getenv("ANTIGRAVITY_CONVERSATION_ID")
+    threshold = get_model_context_threshold(model_name)
 
     transcript_path: Optional[Path] = None
     if conv_id:
@@ -147,7 +163,8 @@ def get_context_occupancy(
         if cand.exists():
             transcript_path = cand
 
-    if not transcript_path:
+    # Only fall back to latest transcript if conv_id was not explicitly specified
+    if not transcript_path and not conv_id:
         brain_dir = app_data / "brain"
         if brain_dir.is_dir():
             candidates = sorted(
@@ -156,7 +173,10 @@ def get_context_occupancy(
                 reverse=True
             )
             if candidates:
-                transcript_path = candidates[0]
+                last_cand = candidates[0]
+                # Only use transcript if updated within the last 30 minutes
+                if abs(time.time() - last_cand.stat().st_mtime) < 1800:
+                    transcript_path = last_cand
 
     telemetry: Dict[str, Any] = {
         "tracked": False,
@@ -165,7 +185,7 @@ def get_context_occupancy(
         "total_prompt_tokens": 0,
         "output_tokens": 0,
         "step_index": 0,
-        "compaction_threshold": 100000,
+        "compaction_threshold": threshold,
         "occupancy_percentage": 0.0,
         "status": "UNKNOWN",
         "recommendation": "Context telemetry not available.",
@@ -200,18 +220,24 @@ def get_context_occupancy(
             out = int(last_tokens.get("output_tokens", 0) or 0)
             total = inp + cache
             step = int(last_tokens.get("step_index", 0) or 0)
-            threshold = 100000
             pct = round((total / threshold) * 100, 1)
 
-            if total >= 80000:
+            crit_threshold = int(threshold * 0.8)
+            mod_threshold = int(threshold * 0.5)
+
+            thresh_lbl = f"{threshold // 1000}k" if threshold < 1000000 else f"{threshold // 1000000}M"
+            crit_lbl = f"{crit_threshold // 1000}k" if crit_threshold < 1000000 else f"{crit_threshold / 1000000:.1f}M"
+            mod_lbl = f"{mod_threshold // 1000}k" if mod_threshold < 1000000 else f"{mod_threshold / 1000000:.1f}M"
+
+            if total >= crit_threshold:
                 status = "CRITICAL"
-                rec = "Context occupancy is high (≥80k tokens). High risk of compaction or slowdown. Hand off session now."
-            elif total >= 50000:
+                rec = f"Context occupancy is high (≥{crit_lbl} tokens of {thresh_lbl}). High risk of compaction or slowdown. Hand off session now."
+            elif total >= mod_threshold:
                 status = "MODERATE"
-                rec = "Context occupancy is moderate (≥50k tokens). Consider /handoff at next milestone."
+                rec = f"Context occupancy is moderate (≥{mod_lbl} tokens of {thresh_lbl}). Consider /handoff at next milestone."
             else:
                 status = "HEALTHY"
-                rec = "Context occupancy is healthy (<50k tokens). Normal execution."
+                rec = f"Context occupancy is healthy (<{mod_lbl} tokens of {thresh_lbl}). Normal execution."
 
             telemetry.update({
                 "tracked": True,
@@ -320,7 +346,9 @@ def generate_handoff_markdown(
         ctx_stat = context_occupancy.get("status", "UNKNOWN")
         ctx_tok = context_occupancy.get("total_prompt_tokens", 0)
         ctx_pct = context_occupancy.get("occupancy_percentage", 0.0)
-        lines.append(f"| **Context Window** | `{ctx_stat}` | {ctx_tok:,} tokens ({ctx_pct}% of ~100k threshold) |")
+        thresh = context_occupancy.get("compaction_threshold", 1000000)
+        thresh_lbl = f"~{thresh // 1000}k" if thresh < 1000000 else f"~{thresh // 1000000}M"
+        lines.append(f"| **Context Window** | `{ctx_stat}` | {ctx_tok:,} tokens ({ctx_pct}% of {thresh_lbl} threshold) |")
     else:
         lines.append("| **Context Window** | `NONE` | Transcript token telemetry not available |")
 
@@ -434,6 +462,8 @@ def main():
 
     if args.stats:
         stats = get_context_occupancy()
+        thresh = stats.get("compaction_threshold", 1000000)
+        thresh_lbl = f"~{thresh // 1000}k" if thresh < 1000000 else f"~{thresh // 1000000}M"
         if args.json:
             print(json.dumps(stats, indent=2))
         else:
@@ -441,7 +471,7 @@ def main():
             print(f"  - Total Prompt Tokens: {stats['total_prompt_tokens']:,} (Input: {stats['input_tokens']:,}, Cache: {stats['cache_read_tokens']:,})")
             print(f"  - Output Tokens:       {stats['output_tokens']:,}")
             print(f"  - Step Index:          {stats['step_index']}")
-            print(f"  - Occupancy (~100k):   {stats['occupancy_percentage']}% [{stats['status']}]")
+            print(f"  - Occupancy ({thresh_lbl}):   {stats['occupancy_percentage']}% [{stats['status']}]")
             print(f"  - Recommendation:      {stats['recommendation']}")
         return
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -37,6 +38,8 @@ from typing import Any, Dict, List, Optional, Tuple
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+
+logger = logging.getLogger("agy_hook")
 
 FILE_WRITE_TOOLS = ("write_to_file", "replace_file_content", "multi_replace_file_content")
 SHELL_TOOLS = ("run_command",)
@@ -129,8 +132,8 @@ def debug_dump(event: str, payload: Dict[str, Any]) -> None:
         log.parent.mkdir(parents=True, exist_ok=True)
         with open(log, "a", encoding="utf-8") as f:
             f.write(json.dumps({"t": time.time(), "event": event, "payload": payload}) + "\n")
-    except OSError:
-        pass
+    except OSError as err:
+        logger.debug("Failed writing hook debug log: %s", err)
 
 
 # -------------------------------------------------------------------------- git
@@ -193,8 +196,8 @@ def state_dir(root: Path) -> Path:
         d = Path.home() / ".gemini" / "agy-state" / h
     try:
         d.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
+    except OSError as err:
+        logger.debug("Failed creating state directory: %s", err)
     return d
 
 
@@ -215,8 +218,8 @@ def save_state(root: Path, state: Dict[str, Any]) -> None:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(state, fh, indent=1)
         os.replace(str(tmp), str(f))
-    except OSError:
-        pass
+    except OSError as err:
+        logger.debug("Failed saving state: %s", err)
 
 
 def _trim_dict(d: Dict[str, Any], keep: int) -> Dict[str, Any]:
@@ -365,8 +368,8 @@ def resolve_commands(root: Path, cfg: Dict[str, Any]) -> Dict[str, str]:
             det = detect_project_framework(root)
             if det.get("status") == "DETECTED" and det.get("test_command"):
                 cmds["test"] = det["test_command"]
-        except Exception:
-            pass
+        except Exception as err:
+            logger.debug("Failed detecting project test command: %s", err)
     if "typecheck" not in cmds and cfg.get("typecheck_command") is None:
         if (root / "tsconfig.json").is_file() and _local_bin(root, "tsc"):
             cmds["typecheck"] = "npx --no-install tsc --noEmit"
@@ -666,8 +669,8 @@ def handle_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
                 state["internal_errors"] = 0
                 save_state(root, state)
                 return {"decision": "allow"}
-        except Exception:
-            pass
+        except Exception as err:
+            logger.debug("Failed updating stop gate internal errors: %s", err)
         return {
             "decision": "continue",
             "reason": (
@@ -745,7 +748,8 @@ def cli_doctor() -> int:
         line(stop.get("decision") == "continue", "stop gate blocks a broken change (terminationReason=model_stop)")
         guard = handle_pre_tool(dict(payload, toolCall={"name": "run_command", "args": {"CommandLine": "git commit --no-verify -m x"}}))
         line(guard.get("decision") == "deny", "guard blocks 'git commit --no-verify'")
-        secret = handle_pre_tool(dict(payload, toolCall={"name": "write_to_file", "args": {"TargetFile": "a.py", "CodeContent": "k='AKIAABCDEFGHIJKLMNOP'"}}))
+        dummy_secret = "AKIA" + "ABCDEFGHIJKLMNOP"
+        secret = handle_pre_tool(dict(payload, toolCall={"name": "write_to_file", "args": {"TargetFile": "a.py", "CodeContent": f"k='{dummy_secret}'"}}))
         line(secret.get("decision") == "deny", "guard blocks a secret written with write_to_file")
     print("RESULT: " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1

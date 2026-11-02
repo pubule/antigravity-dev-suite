@@ -184,7 +184,7 @@ def status() -> int:
 def update() -> int:
     if (SUITE_DIR / ".git").exists():
         print(f"  Updating {SUITE_DIR} ...")
-        res = subprocess.run(["git", "-C", str(SUITE_DIR), "pull", "--ff-only"], check=False)
+        res = subprocess.run(["git", "-C", str(SUITE_DIR), "pull", "--ff-only"], check=False, timeout=60)
         if res.returncode != 0:
             print("  ! git pull failed. Resolve it, then run the installer again.")
             return res.returncode

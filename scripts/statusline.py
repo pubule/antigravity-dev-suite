@@ -81,6 +81,7 @@ def render_statusline(payload: Optional[Dict[str, Any]] = None) -> str:
     dir_name = Path.cwd().name
     pct = 0.0
     tokens_label = ""
+    has_ctx_data = False
 
     if payload:
         # Extract model
@@ -101,21 +102,25 @@ def render_statusline(payload: Optional[Dict[str, Any]] = None) -> str:
             rem = ctx_window.get("remaining_percentage")
             if rem is not None:
                 pct = max(0.0, min(100.0, 100.0 - float(rem)))
+                has_ctx_data = True
             usage = ctx_window.get("current_usage")
             if isinstance(usage, dict):
                 in_tok = usage.get("input_tokens", 0) + usage.get("cache_read_tokens", 0)
                 if in_tok > 0:
                     tokens_label = f" ({in_tok // 1000}k)"
+                    has_ctx_data = True
 
-    # Fallback to transcript telemetry if payload context is missing
-    if pct == 0.0 and get_context_occupancy:
+    # Fallback to transcript telemetry ONLY if payload has no context window data
+    if not has_ctx_data and get_context_occupancy:
         try:
-            telemetry = get_context_occupancy()
+            telemetry = get_context_occupancy(model_name=model_name)
             if telemetry.get("tracked"):
                 pct = telemetry.get("occupancy_percentage", 0.0)
                 tot = telemetry.get("total_prompt_tokens", 0)
+                thresh = telemetry.get("compaction_threshold", 1000000)
+                thresh_lbl = f"{thresh // 1000}k" if thresh < 1000000 else f"{thresh // 1000000}M"
                 if tot > 0:
-                    tokens_label = f" ({tot // 1000}k/100k)"
+                    tokens_label = f" ({tot // 1000}k/{thresh_lbl})"
         except Exception as err:
             sys.stderr.write(f"[statusline context fallback failed]: {err}\n")
 
