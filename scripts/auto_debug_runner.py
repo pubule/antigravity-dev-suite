@@ -5,9 +5,12 @@ Antigravity Auto-Debug Hook Runner & Framework Engine (Cross-Platform)
 Performs fast, non-blocking syntax probes, framework detection, and test suite execution.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import json
+import logging
 import time
 import tempfile
 import subprocess

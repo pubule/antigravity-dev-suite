@@ -5,7 +5,19 @@ description: Multi-pass adversarial code review inspecting invariants, concurren
 
 # 🛡️ Adversarial Multi-Pass Code Review (`/code-review`)
 
+> **Paths**: `scripts/` is the suite folder, not your project: `~/.gemini/config/plugins/antigravity-dev-suite/scripts/`. On Windows use `py -3` instead of `python3`. The Stop gate runs the checks again when you finish.
+
 Use this skill to perform an in-depth, adversarial audit of changed code, PR diffs, or specific modules before merging or committing. Enforces strict security, bug hunting, and **Anti-Overengineering (KISS/YAGNI)**.
+
+---
+
+## 🧑‍⚖️ Independent Reviewer (Fresh Context)
+
+The author of a change misses its own mistakes. Run the review in a subagent with fresh context:
+1. Collect the diff: `git diff HEAD` (plus untracked files with `git status --porcelain -uall`).
+2. Start the subagent (`model: inherit`) with only the user task and the diff. Do not send your reasoning or plan.
+3. Ask for concrete defects only: file, line, failing input, expected vs actual result.
+4. Fix each confirmed defect with a test that fails before the fix.
 
 ---
 
@@ -24,11 +36,11 @@ flowchart TD
 
 ### Pass 1: Invariants, Algorithmic Bounds & KISS/YAGNI Gate
 - **KISS/YAGNI Audit**: Did the code introduce speculative abstractions, unused parameters, or micro-frameworks?
-- **Diff Hygiene & Comment Preservation**: Inspect git diff against HEAD via `python3 scripts/diff_guard.py` to ensure existing comments and docstrings are maintained and no nesting blowups occurred.
-- **Algorithmic Bounds**: Verify time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns via `python3 scripts/critic_loop.py --mode semantic --target .`.
-- **Targeted Symbol Inspection**: Use `python3 scripts/semantic_slice.py <file> --symbol <name>` to isolate symbols and dependencies cleanly.
-- **Cross-File Impact**: Check call-sites using `python3 scripts/symbol_impact.py <symbol>`.
-- **Contract Adherence**: Are public function and class signatures backwards-compatible? Verify with `python3 scripts/api_contract_guard.py --target .`.
+- **Diff Hygiene & Comment Preservation**: Inspect git diff against HEAD via `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/diff_guard.py` to ensure existing comments and docstrings are maintained and no nesting blowups occurred.
+- **Algorithmic Bounds**: Verify time and space complexity ($O(1)$, $O(n)$, $O(n \log n)$). Eliminate $O(n^2)$ loops and ReDoS patterns via `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/critic_loop.py --mode semantic --target .`.
+- **Targeted Symbol Inspection**: Use `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/semantic_slice.py <file> --symbol <name>` to isolate symbols and dependencies cleanly.
+- **Cross-File Impact**: Check call-sites using `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/symbol_impact.py <symbol>`.
+- **Contract Adherence**: Are public function and class signatures backwards-compatible? Verify with `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/api_contract_guard.py --target .`.
 - **Edge cases**: Are boundary values (`0`, `-1`, empty collections, max size, Unicode) tested and handled?
 
 ### Pass 2: Structured Concurrency, Cancellation & Resources
@@ -84,19 +96,19 @@ Execute deterministic checks before invoking the `claude-critic` subagent:
 
 ```bash
 # Run full static audit across target directory
-python3 scripts/critic_loop.py --mode all --target .
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/critic_loop.py --mode all --target .
 
 # Run AST diff hygiene and comment preservation check
-python3 scripts/diff_guard.py
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/diff_guard.py
 
 # Trace cross-file symbol callers and usage impact
-python3 scripts/symbol_impact.py <symbol>
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/symbol_impact.py <symbol>
 
 # Run security and secret scan only
-python3 scripts/critic_loop.py --mode security --target .
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/critic_loop.py --mode security --target .
 
 # Run syntax and bracket balance scan only
-python3 scripts/critic_loop.py --mode syntax --target .
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/critic_loop.py --mode syntax --target .
 ```
 
 ---

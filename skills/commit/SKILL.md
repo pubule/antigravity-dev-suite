@@ -5,6 +5,8 @@ description: Pre-commit verification pipeline executing static audits, test vali
 
 # 🚀 Pre-Commit Verification Pipeline (`/commit`)
 
+> **Paths**: `scripts/` is the suite folder, not your project: `~/.gemini/config/plugins/antigravity-dev-suite/scripts/`. On Windows use `py -3` instead of `python3`. The Stop gate runs the checks again when you finish.
+
 Use this skill to inspect, verify, and commit code changes atomically. Guarantees zero secret leaks, 100% test pass rate, and Conventional Commits formatting under the ASD-STE100 standard.
 
 ---
@@ -27,15 +29,15 @@ flowchart TD
    ```
 2. Check for staged credentials or unencrypted secrets using `critic_loop.py`:
    ```bash
-   python3 scripts/critic_loop.py --mode security --target .
+   python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/critic_loop.py --mode security --target .
    ```
 3. Abort immediately if any private key, cloud token, or unauthorized file is staged.
 
 ### Phase 2: Static Critic Audit & Public API Contract Guard
 Run the automated AST, semantic critic, and public API drift guard across changed files:
 ```bash
-python3 scripts/critic_loop.py --mode all --target .
-python3 scripts/api_contract_guard.py --target .
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/critic_loop.py --mode all --target .
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/api_contract_guard.py --target .
 ```
 Verify:
 - 0 breaking changes to exported signatures without backwards-compatible defaults.
@@ -46,7 +48,7 @@ Verify:
 ### Phase 3: Test Suite Verification
 Run the project test suite using `auto_debug_runner.py`:
 ```bash
-python3 scripts/auto_debug_runner.py --run-tests
+python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/auto_debug_runner.py --run-tests
 ```
 - If tests fail, invoke auto-debug loop to heal code surgically.
 - Do NOT proceed to commit if any test fails.

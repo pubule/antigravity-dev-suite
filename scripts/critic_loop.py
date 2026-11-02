@@ -5,6 +5,8 @@ Executes deep verification and formats structured evaluation reports for logic, 
 Compatible with Windows 10/11, macOS, and Linux.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import re
@@ -176,7 +178,7 @@ def audit_code_logic(target: str, test_mode: bool = False, submode: str = "all",
     check_semantic = submode in ["all", "logic", "security", "complexity", "semantic"]
 
     cache: dict[str, Any] = {}
-    cache_path = get_critic_cache_path()
+    cache_path = get_critic_cache_path() if (use_cache and not test_mode) else None
     if use_cache and not test_mode:
         try:
             if cache_path.is_file():

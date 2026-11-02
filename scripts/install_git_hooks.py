@@ -2,11 +2,12 @@
 """
 Antigravity Pre-Commit Git Hook Installer (Cross-Platform)
 Installs or updates .git/hooks/pre-commit to enforce Claude Opus 5.5 quality gates:
-1. Critic loop logic and OWASP security audit (critic_loop.py)
-2. Project typecheck verification (auto_debug_runner.py --typecheck)
-3. Project test suite execution (auto_debug_runner.py --run-tests)
+The hook runs `agy_hook.py check`, the same gate as the Antigravity Stop hook:
+syntax, static critic, test-first, typecheck/lint when configured, and tests.
 Compatible with Windows, macOS, and Linux.
 """
+
+from __future__ import annotations
 
 import sys
 import os
@@ -17,53 +18,20 @@ from pathlib import Path
 
 HOOK_SCRIPT_TEMPLATE = """#!/bin/sh
 # Antigravity Enterprise Quality Gate - Claude Opus 5.5 Standard
-# Enforces syntax, OWASP security, typecheck, and test integrity before commit.
+# Runs the same verification gate as the Antigravity Stop hook before every commit:
+# syntax, static critic, test-first, typecheck/lint (if configured) and tests.
 
-set -e
+PYTHON_BIN="{python_path}"
+GATE_SCRIPT="{gate_script_path}"
 
-# Disallow bypass unless explicitly requested
-if [ "$AGY_SKIP_PRECOMMIT" = "1" ]; then
-    echo "⚠️ [Antigravity] AGY_SKIP_PRECOMMIT is set. Bypassing pre-commit gate."
-    exit 0
+if [ ! -f "$GATE_SCRIPT" ] || [ ! -f "$PYTHON_BIN" ]; then
+    echo "❌ [Antigravity] Quality gate or Python not found ($PYTHON_BIN / $GATE_SCRIPT)."
+    echo "   Reinstall the suite, or remove this hook with: python3 <suite>/scripts/install_git_hooks.py --uninstall"
+    exit 1
 fi
 
-echo "🧠 [Antigravity] Executing Claude Opus 5.5 Pre-Commit Quality Gate..."
-
-# 1. Resolve Python 3 executable
-PYTHON_BIN="python3"
-if ! command -v python3 >/dev/null 2>&1; then
-    if command -v python >/dev/null 2>&1; then
-        PYTHON_BIN="python"
-    else
-        echo "❌ [Antigravity] Python 3 executable not found in PATH."
-        exit 1
-    fi
-fi
-
-# 2. Run Critic Loop Logic & Security Audit
-echo "🔍 [1/3] Running Critic Loop Static & Security Audit..."
-CRITIC_SCRIPT="{critic_script_path}"
-if [ -f "$CRITIC_SCRIPT" ]; then
-    "$PYTHON_BIN" "$CRITIC_SCRIPT" --mode logic --target .
-else
-    echo "ℹ️ Critic script not found at $CRITIC_SCRIPT. Skipping static audit."
-fi
-
-# 3. Run Project Typecheck
-echo "📐 [2/3] Running Project Typecheck..."
-RUNNER_SCRIPT="{runner_script_path}"
-if [ -f "$RUNNER_SCRIPT" ]; then
-    "$PYTHON_BIN" "$RUNNER_SCRIPT" --typecheck . || echo "⚠️ Typecheck warnings detected."
-fi
-
-# 4. Run Project Test Suite
-echo "🧪 [3/3] Running Project Test Suite..."
-if [ -f "$RUNNER_SCRIPT" ]; then
-    "$PYTHON_BIN" "$RUNNER_SCRIPT" --run-tests .
-fi
-
-echo "✅ [Antigravity] All pre-commit quality gates passed successfully."
-exit 0
+echo "🧠 [Antigravity] Running the pre-commit quality gate..."
+exec "$PYTHON_BIN" "$GATE_SCRIPT" check .
 """
 
 def find_git_root(start_dir: Path | None = None) -> Path | None:
@@ -116,12 +84,11 @@ def install_git_hook(workspace_dir: str | Path | None = None, force: bool = Fals
 
     # Resolve scripts paths relative to current script installation
     this_dir = Path(__file__).resolve().parent
-    critic_path = (this_dir / "critic_loop.py").resolve()
-    runner_path = (this_dir / "auto_debug_runner.py").resolve()
+    gate_path = (this_dir / "agy_hook.py").resolve()
 
     hook_content = HOOK_SCRIPT_TEMPLATE.format(
-        critic_script_path=str(critic_path).replace("\\", "/"),
-        runner_script_path=str(runner_path).replace("\\", "/")
+        python_path=str(Path(sys.executable).resolve()).replace("\\", "/"),
+        gate_script_path=str(gate_path).replace("\\", "/")
     )
 
     try:

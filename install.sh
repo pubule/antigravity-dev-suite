@@ -12,15 +12,17 @@ PLUGINS_DIR="${CONFIG_DIR}/plugins"
 TARGET_PLUGIN_DIR="${PLUGINS_DIR}/antigravity-dev-suite"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 
-# Detect Python interpreter
-PYTHON_BIN="python3"
-if ! command -v python3 >/dev/null 2>&1; then
-  if command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="python"
-  else
-    echo "❌ Error: Python 3 is required. Please install Python 3.10+."
-    exit 1
+# Detect a Python 3.9+ interpreter (macOS ships 3.9 as /usr/bin/python3)
+PYTHON_BIN=""
+for cand in python3 python; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+    PYTHON_BIN="$(command -v "$cand")"
+    break
   fi
+done
+if [ -z "${PYTHON_BIN}" ]; then
+  echo "❌ Error: Python 3.9+ is required (python3 not found or too old)."
+  exit 1
 fi
 
 echo "=========================================================="
@@ -88,9 +90,16 @@ except Exception:
 " "${CONFIG_FILE}" 2>/dev/null || true
 echo "  ✔ Plugin enabled in config.json"
 
-# 5. Run Self-Verification Test
-echo "[5/5] Running E2E Test Suite..."
-"${PYTHON_BIN}" "${SCRIPT_DIR}/tests/test_plugin_suite.py"
+# 5. Register hooks globally (read by both the Antigravity IDE and CLI) and self-test
+echo "[5/5] Registering hooks and running the installation doctor..."
+"${PYTHON_BIN}" "${SCRIPT_DIR}/scripts/setup_hooks.py" install
+if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/scripts/agy_hook.py" doctor; then
+  echo "❌ The doctor found problems (see FAIL lines above)."
+  exit 1
+fi
+if [ "${1:-}" = "--full-tests" ]; then
+  "${PYTHON_BIN}" "${SCRIPT_DIR}/tests/test_plugin_suite.py"
+fi
 
 echo ""
 echo "=========================================================="

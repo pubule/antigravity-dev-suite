@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.16.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.17.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -93,15 +93,14 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.16.0)
-├── hooks.json                  # Root PreToolUse & PostToolUse hook configuration
+├── plugin.json                 # Standard AGY plugin manifest (v1.17.0)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
 │   ├── claude-critic.md        # Adversarial logic, migration & constraints critic (Opus 5.5 Standard)
 │   └── visual-qa-critic.md     # Multimodal visual QA critic (Dual-Viewport)
 ├── rules/                      # System rules injected into context
-│   ├── AGENTS.md               # Master Claude Opus 5.5 Enterprise Rulebook (16 Architectural Rules)
+│   ├── AGENTS.md               # Rulebook: enforced verification rules (section 0) + 16 guidelines
 │   ├── database/               # Database migration and zero-downtime evolution rules
 │   └── languages/              # Multi-language strict type-safety & idiomatic guidelines
 ├── skills/                     # Skill modules & First-Class Slash Commands
@@ -125,7 +124,9 @@ antigravity-dev-suite/
 │   ├── api_contract_guard.py   # Automated public API contract drift detector (Python, TS, Go, Rust)
 │   ├── repo_map.py             # Token-budgeted repository symbol mapper with persistent mtime cache
 │   ├── handoff.py              # Standalone session handoff generator with secret redaction
-│   ├── stop_gate.py            # Dual-gate completion validator (test & critic pass enforcement)
+│   ├── agy_hook.py             # Single entry point for all hooks + verification gate (check, doctor)
+│   ├── setup_hooks.py          # Registers hooks in ~/.gemini/config/hooks.json (install/update/uninstall)
+│   ├── stop_gate.py            # Compatibility wrapper around the agy_hook.py Stop gate
 │   ├── diff_guard.py           # AST diff hygiene & cognitive complexity analyzer
 │   ├── symbol_impact.py        # Polyglot symbol dependency and blast radius tracer
 │   ├── test_scaffolder.py      # Automated boundary and edge-case test scaffolder
@@ -140,7 +141,9 @@ antigravity-dev-suite/
 ├── install.sh                  # 1-Click installer for macOS & Linux
 ├── install.ps1                 # 1-Click installer for Windows (PowerShell)
 ├── uninstall.sh                # Clean uninstaller for macOS & Linux
-└── uninstall.ps1               # Clean uninstaller for Windows (PowerShell)
+├── uninstall.ps1               # Clean uninstaller for Windows (PowerShell)
+├── update.sh                   # git pull + re-register hooks (macOS & Linux)
+└── update.ps1                  # git pull + re-register hooks (Windows)
 ```
 
 ---
@@ -168,42 +171,78 @@ chmod +x install.sh
 git clone https://ghb.internal.unicreditgroup.eu/scm/~c332376/antigravity-dev-suite.git
 cd antigravity-dev-suite
 
-# Run 1-Click installer
-.\install.ps1
+# Run 1-Click installer (Bypass only affects this run, if scripts are blocked)
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 # Optional: Install Playwright Chromium browser binaries
-.\install.ps1 -WithBrowsers
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -WithBrowsers
+```
+
+Requirements: Python 3.9+ (the macOS system `python3` works) and git. The installer:
+1. links the suite into `~/.gemini/config/plugins/antigravity-dev-suite`;
+2. registers the hooks in `~/.gemini/config/hooks.json` (read by both the Antigravity IDE and CLI), with the absolute path of your Python, so `python3` vs `py` and shell differences do not matter;
+3. runs `agy_hook.py doctor`, which sends real-format payloads through every hook and fails the install if a check does not fire.
+
+Check the result in the Antigravity CLI with `/hooks`, or any time with:
+```bash
+python3 scripts/agy_hook.py doctor        # Windows: py -3 scripts\agy_hook.py doctor
+python3 scripts/setup_hooks.py status
 ```
 
 ---
 
 ## 🔄 Updating to Latest Version
 
-Because installation creates a symbolic link (macOS/Linux) or NTFS Directory Junction (Windows) pointing directly to the Git repository folder, updates become **active immediately** in Antigravity without reinstalling.
+Run the updater from the suite folder. It pulls the latest commits and registers the hooks again (needed when Python moves, for example after a Homebrew upgrade).
 
-### macOS & Linux
 ```bash
-# 1. Navigate to the local repository directory
-cd /path/to/antigravity-dev-suite
-
-# 2. Pull latest commits from main branch
-git pull origin main
-
-# 3. Verify suite integrity (optional)
-python3 tests/test_plugin_suite.py
+./update.sh                                # macOS & Linux
 ```
-
-### Windows (PowerShell)
 ```powershell
-# 1. Navigate to the local repository directory
-cd C:\path\to\antigravity-dev-suite
-
-# 2. Pull latest commits from main branch
-git pull origin main
-
-# 3. Verify suite integrity (optional)
-python tests\test_plugin_suite.py
+powershell -ExecutionPolicy Bypass -File .\update.ps1   # Windows
 ```
+
+## 🗑️ Uninstall
+`./uninstall.sh` or `.\uninstall.ps1` removes the plugin link and only the suite's entry in `hooks.json`; your other hooks stay.
+
+---
+
+## 🛡️ Verification Gate (how agy is forced to check its work)
+
+| Hook | When | What it does |
+|---|---|---|
+| `SessionStart` | new conversation | remembers the starting commit, so committed changes are still checked |
+| `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, and gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`) |
+| `PostToolUse` | after `write_to_file` / `replace_file_content` / `multi_replace_file_content` | syntax probe of the written file |
+| `PreInvocation` | before each model call | feeds open syntax errors back to the model |
+| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint (if configured) and tests on all changed files; blocks with the full report until they pass |
+
+The gate runs the checks itself; it never trusts a "PASS" written by the agent. Run it by hand with `python3 scripts/agy_hook.py check [project]`. The pre-commit hook (`install_git_hooks.py`) runs the same gate.
+
+### Project configuration (optional): `.agents/agy.json`
+Only you edit this file; the guard blocks the agent from writing it.
+```json
+{
+  "test_command": "npm test",
+  "typecheck_command": "npx tsc --noEmit",
+  "lint_command": "npx eslint .",
+  "require_tests": true,
+  "test_exempt": ["src/generated/*"],
+  "test_timeout": 600,
+  "critic": true
+}
+```
+Without it the gate auto-detects the test command (pytest, vitest/jest, cargo, go, maven/gradle, ...) and runs `tsc` only when it is installed in `node_modules`.
+
+### Environment variables (set by you, never by the agent)
+| Variable | Effect |
+|---|---|
+| `AGY_STOP_GATE_DISABLE=1` | turn the Stop gate off |
+| `AGY_STOP_GATE_MAX_BLOCKS=4` | stops allowed without any file change before the gate gives up (prevents endless loops) |
+| `AGY_REQUIRE_TESTS=0` | turn off the test-first rule |
+| `AGY_TEST_TIMEOUT=600` | seconds for each test/typecheck/lint command |
+| `AGY_PRE_TOOL_GUARD=0` | turn the PreToolUse guard off |
+| `AGY_HOOK_DEBUG=1` | log raw hook payloads to `~/.gemini/agy-hook-debug.log` |
 
 ---
 
@@ -247,12 +286,6 @@ python3 scripts/auto_debug_runner.py --install-git-hooks
 
 # Validate single file syntax and bracket balance
 python3 scripts/auto_debug_runner.py --check <path/to/file>
-
-# Read cached syntax error from recent hook execution
-python3 scripts/auto_debug_runner.py --last-error
-
-# Clear cached syntax error
-python3 scripts/auto_debug_runner.py --clear-last-error
 ```
 
 ### 2. Pre-Commit Git Hook Installer (`install_git_hooks.py`)
@@ -371,13 +404,16 @@ python3 scripts/auto_debug_runner.py --handoff "Target objective"
 python3 scripts/handoff.py --json
 ```
 
-### 10. Dual-Gate Stop Validator (`stop_gate.py`)
+### 10. Verification Gate (`agy_hook.py`)
 ```bash
-# Validate that both test suite (PASS) and critic loop (PASS) are verified
-python3 scripts/stop_gate.py
+# Run the full gate on the changed files of a project (exit 1 on failure)
+python3 scripts/agy_hook.py check /path/to/project
 
-# Emit JSON decision verdict for automated hook consumption
-python3 scripts/stop_gate.py --json
+# Self-test the installation with real-format hook payloads
+python3 scripts/agy_hook.py doctor
+
+# Legacy entry point, same gate
+python3 scripts/stop_gate.py --check /path/to/project
 ```
 
 ### 11. AST Diff Guard & Cognitive Complexity (`diff_guard.py`)

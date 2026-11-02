@@ -6,6 +6,8 @@ Shared between PostToolUse auto-debug runner, critic loop, and test harnesses.
 100% portable across macOS, Linux, and Windows 10/11.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import ast
@@ -217,7 +219,8 @@ def extract_target_file(payload_data: dict | str) -> str:
         args = payload_data
 
     target = (
-        args.get("AbsolutePath")
+        args.get("TargetFile")
+        or args.get("AbsolutePath")
         or args.get("Path")
         or args.get("path")
         or args.get("FilePath")

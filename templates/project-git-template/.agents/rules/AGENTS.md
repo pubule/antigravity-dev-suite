@@ -1,127 +1,142 @@
-# 🧠 Antigravity Enterprise Quality & Cognitive Directives (Claude Opus 5.5 + ASD-STE100)
+# Antigravity Quality Directives (Claude Opus 5.5 Standard + ASD-STE100)
 
-You operate with engineering rigor, architectural depth, and zero-fluff discipline modeled after Claude Opus 5.5 and the **ASD-STE100** standard. Every solution must be mathematically sound, defensively coded, strictly tested, and verified.
-
----
-
-## 1. Zero-Fluff Discipline & ASD-STE100 Technical Communication
-- **Zero Polite Preamble**: Do not write conversational greetings, pleasantries, or filler. Start immediately with technical implementation or answers.
-- **Active Voice & Imperative Mood**: Use active voice. Use the imperative mood for procedural instructions.
-- **Sentence Length Restrictions**: Write maximum 20 words per procedural sentence. Write maximum 25 words per descriptive sentence. Write only one instruction per sentence.
-- **Unambiguous Vocabulary**: Use approved verbs (`create`, `modify`, `execute`, `verify`, `remove`, `configure`). Eliminate filler words (`basically`, `simply`, `obviously`, `just`). Avoid ambiguous pronouns.
-- **Layout**: Use Markdown tables, numbered sequential steps, and clickable file links (`[file.py](file:///path/to/file.py)`).
+Write correct, tested, verified code. Machines check your work: read section 0 first.
 
 ---
 
-## 2. Anti-Overengineering Mandate: KISS & YAGNI
-- **YAGNI**: Never implement speculative abstractions, unused parameters, or unrequested features.
-- **KISS**: Select the simplest working solution with the fewest moving parts. Avoid deep inheritance trees, excessive indirection, and premature caching.
-- **Pragmatic Abstraction**: Extract abstractions only when duplication is proven across three or more sites.
+## 0. How Your Work Is Verified (Enforced)
+
+These rules are enforced by hooks. You cannot finish a task while they fail.
+
+1. **Stop gate.** When you try to finish, the suite runs these checks on every file you changed (including committed files and new folders):
+   - syntax and structure of each changed file;
+   - static critic (secrets, empty `except`, mutable defaults, quadratic traps, unsafe patterns);
+   - **test-first**: a changed production file needs a new or changed test file;
+   - typecheck and lint, when the project configures them;
+   - the project test suite.
+2. **If the gate blocks you**, the reason lists each failure. Fix the cause. Then finish again.
+3. **Never weaken the checks.** Do not delete, skip or loosen tests. Do not add `# nosec` to silence a finding you did not fix. Do not edit `.agents/agy.json`. Do not use `--no-verify`. The guard blocks these actions.
+4. **Run the gate yourself** before you finish. Use the command from the gate message, or:
+   - macOS / Linux: `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/agy_hook.py check`
+   - Windows: `py -3 $HOME\.gemini\config\plugins\antigravity-dev-suite\scripts\agy_hook.py check`
+5. **Report only verified results.** Quote the real command output. Never write "tests pass" without output that shows it.
+6. **Syntax errors come back immediately.** After a bad edit, the next turn starts with the error. Fix it first.
 
 ---
 
-## 3. Defensive Engineering & Adversarial Edge-Case Protocol
-- **Null Pointer Safety**: Validate all inputs defensively. Use optional chaining and null guards.
-- **Boundary Conditions**: Explicitly test and handle `0`, `1`, `-1`, empty collections, single items, max integer limits, and Unicode strings.
-- **Concurrency & Race Conditions**: Ensure thread-safety. Eliminate unprotected shared mutable state and async task leaks.
-- **Resource Lifecycle**: Always release resources using deterministic cleanup (`try...finally`, `with`, `defer`). Prevent file descriptor and memory leaks.
-- **Graceful Error Handling**: Do not write empty catch blocks. Fail fast with actionable error messages.
+## 1. Work Method
+
+1. **Read before you write.** Open the files you change and their callers. For a signature change, find all call sites first (`symbol_impact.py <symbol>`).
+2. **Small steps.** Change one or two files per step. Verify each step before the next.
+3. **RED, GREEN, IMPROVE.** Write a failing test. Write the minimum code that passes it. Then clean up with all tests green.
+4. **Root cause, not symptoms.** When a test fails, find why. Do not patch the assertion.
+5. **Stop and ask** when the request is ambiguous or a fix needs a large redesign.
 
 ---
 
-## 4. Strict Multi-Language Type Safety & Idiomatic Standards
-For full language specifications, consult [rules/languages/typescript.md](rules/languages/typescript.md), [rules/languages/python.md](rules/languages/python.md), and [rules/languages/compiled.md](rules/languages/compiled.md).
-- **TypeScript**: Enforce `strict: true`. Avoid `any`. Use discriminated unions and immutable patterns.
-- **Python**: Use explicit type annotations everywhere (`from typing import ...` or `X | Y`). Never define mutable default arguments.
-- **Rust / Go**: Check all errors explicitly. Avoid unhandled `.unwrap()` in production Rust paths. Propagate `context.Context` in Go.
+## 2. Technical Communication (ASD-STE100)
+
+- No greetings or filler. Start with the answer.
+- Active voice, imperative mood. Maximum 20 words per instruction, one instruction per sentence.
+- Use tables, numbered steps, and clickable file links.
 
 ---
 
-## 5. Strict Test-Driven Development (TDD) Mandate
-Follow the Red-Green-Improve cycle for all logic, features, and fixes:
-1. **RED**: Write failing unit or integration tests covering requirements and boundary cases.
-2. **GREEN**: Write minimal production code to pass all tests.
-3. **IMPROVE**: Refactor for clarity and performance while maintaining 100% test pass rate.
-4. **Verification Mandate**: Never complete a task without executing terminal verification commands.
+## 3. Design: KISS & YAGNI
+
+- Choose the simplest working design with the fewest moving parts.
+- Do not add unrequested features, unused parameters, or speculative abstractions.
+- Extract an abstraction only when the same code appears in three or more places.
 
 ---
 
-## 6. Autonomous Self-Healing & Closed-Loop Verification
-- **Auto-Debug Cycle**: Analyze test failures at AST and semantic levels. Pinpoint root causes without guessing. Apply minimal surgical edits and re-verify.
-- **Adversarial Audit Loop**: Run `critic_loop.py` against all changes. If status is `RETRY`, apply surgical fixes immediately. Repeat until status is `PASS`.
+## 4. Defensive Engineering
+
+- Validate inputs. Handle `0`, `1`, `-1`, empty collections, `null`, Unicode, and limits.
+- Release resources deterministically (`with`, `try...finally`, `defer`).
+- No empty `catch`/`except` blocks. Fail fast with an actionable message.
 
 ---
 
-## 7. Enterprise Security Gate (OWASP Top 10)
-- **Zero Secrets**: Never commit or log API keys, credentials, or tokens.
-- **Injection Defense**: Use parameterized queries for SQL/NoSQL. Never interpolate shell arguments without array form.
-- **XSS & SSRF**: Sanitize untrusted input. Whitelist URLs before server-side fetching.
-- **Safe Parsing**: Validate schemas before deserializing untrusted payloads. Avoid unsafe `pickle` or `eval`.
+## 5. Type Safety
+
+Language details: [rules/languages/typescript.md](rules/languages/typescript.md), [rules/languages/python.md](rules/languages/python.md), [rules/languages/compiled.md](rules/languages/compiled.md).
+- TypeScript: `strict: true`, no `any`, discriminated unions.
+- Python: annotate every function. Never use mutable default arguments.
+- Rust / Go: check every error. No unhandled `.unwrap()` in production paths.
 
 ---
 
-## 8. Multimodal Visual QA & Dual-Viewport Verification
-When modifying UI components, verify both desktop (1280x800) and mobile (375x667):
-1. **Zero Overflow**: Verify `scrollWidth <= innerWidth` on mobile viewport.
-2. **Touch Targets**: Ensure interactive touch targets meet minimum 44x44px dimensions.
-3. **Zero Errors**: Verify 0 runtime console errors and 0 unhandled promise rejections.
+## 6. Security (OWASP Top 10)
+
+- Never write secrets, keys or tokens into files or logs.
+- Use parameterized queries. Pass shell arguments as arrays.
+- Validate untrusted input. Do not use `eval` or `pickle` on untrusted data.
 
 ---
 
-## 9. Algorithmic Invariants & Complexity Bounds
-- **Complexity Limits**: Restrict computational complexity to $O(1)$, $O(n)$, or $O(n \log n)$. Reject unneeded $O(n^2)$ algorithms.
-- **Quadratic Trap Elimination**: Never run linear searches (`in <list>`, `.indexOf()`) inside iteration loops. Convert collections to sets or maps before loops.
-- **ReDoS Prevention**: Eliminate nested quantifiers (`(a+)+`) in regular expressions.
+## 7. Performance
+
+- Keep algorithms at O(1), O(n) or O(n log n). No linear search inside a loop: build a set or map first.
+- No nested regex quantifiers such as `(a+)+`.
 
 ---
 
-## 10. Typestate Patterns & Compile-Time Invariants
-- **Branded Types**: Brand identifier primitives (`type UserId = string & { readonly __brand: unique symbol }`).
-- **Typestate Transitions**: Model domain lifecycles with distinct types to reject invalid state transitions at compile time.
-- **Exhaustiveness**: Enforce exhaustive pattern matching on discriminated unions using `never` or `assert_never`.
+## 8. Frontend
+
+When you change UI, run `/visual-qa`: desktop 1280x800 and mobile 375x667, zero console errors, no horizontal overflow, touch targets of 44x44px or more.
 
 ---
 
-## 11. Structured Concurrency & Resource Bounds
-- **Structured Primitives**: Use `TaskGroup` in Python, `AbortController` in JS/TS, and `errgroup` in Go.
-- **Cancellation**: Propagate cancellation tokens through every asynchronous downstream call.
-- **Concurrency Bounds**: Bound concurrent operations using semaphores or worker pools.
-- **Promise Handling**: Always await, return, or catch every Promise in JavaScript and TypeScript.
+## 9. Concurrency
+
+Use structured primitives (`TaskGroup`, `AbortController`, `errgroup`). Propagate cancellation. Bound parallel work. Await or handle every Promise.
 
 ---
 
-## 12. Property-Based Testing & Domain Isolation
-- **Fuzz Testing**: Supplement unit tests with property-based testing (`Hypothesis`, `fast-check`).
-- **Domain Isolation**: Keep core business logic independent of frameworks, databases, and network transports.
-- **Supply Chain**: Audit dependencies regularly with vulnerability scanners (`pip-audit`, `npm audit`).
+## 10. Typestate & Invariants
+
+Brand identifier types. Model lifecycles with distinct types. Make pattern matching exhaustive (`never`, `assert_never`).
 
 ---
 
-## 13. Public API Contract Preservation & Non-Breaking Evolution
-- **Contract-First Stability**: Never remove, rename, or reorder parameters in exported public interfaces.
-- **Additive Evolution**: Add new parameters as optional with backward-compatible defaults.
-- **Schema Compatibility**: Ensure data schemas accept legacy payloads without runtime failures.
-- **Deprecation Lifecycle**: Mark obsolete APIs with explicit deprecation notices and migration paths before removal.
+## 11. Property-Based Testing
+
+Add property tests (`Hypothesis`, `fast-check`) for parsers, serializers and pure algorithms.
+
+---
+
+## 12. Dependencies
+
+Add a dependency only when needed. Audit with `pip-audit` or `npm audit`.
+
+---
+
+## 13. Public API Contract Preservation
+
+- **Contract-First Stability**: never remove, rename or reorder parameters of exported interfaces.
+- Add new parameters as optional with backward-compatible defaults. Deprecate before removal.
 
 ---
 
 ## 14. Database Migration Safety & Zero-Downtime Schema Evolution
-For complete migration protocols, see [rules/database/migrations.md](rules/database/migrations.md).
-- **Expand/Contract Pattern**: Implement database schema changes in distinct additive and subtractive phases.
-- **Lock Avoidance & Concurrent DDL**: Always execute index creation with `CREATE INDEX CONCURRENTLY` in PostgreSQL. Never add `NOT NULL` columns without default values to existing populated tables.
-- **Backward-Compatible Rollbacks**: Guarantee that migration scripts are reversible without service interruption.
-- **Safe Column Deletion**: Never drop active columns in a single release. Deprecate columns first and remove references before deletion.
+
+Full protocol: [rules/database/migrations.md](rules/database/migrations.md).
+- **Expand/Contract Pattern**: add first, migrate, remove in a later release.
+- Use `CREATE INDEX CONCURRENTLY` in PostgreSQL. Never add a `NOT NULL` column without a default to a populated table.
+- Every migration must be reversible.
 
 ---
 
 ## 15. Subagent Model Inheritance & Latency Optimization
-- **Model Inheritance Mandate**: Configure all subagents with `model: inherit`. Subagents must inherit the parent model configuration.
-- **Pro Model Prohibition**: Never configure subagents with `model: pro`. Explicit `pro` configurations create heavy latency bottlenecks.
-- **Velocity Preservation**: Use lightweight model inheritance to prevent execution pauses and maintain interactive turn velocity.
+
+- **Model Inheritance Mandate**: configure subagents with `model: inherit`.
+- **Pro Model Prohibition**: never configure subagents with `model: pro`.
+- **Independent review**: give a review subagent only the diff and the task, not your reasoning.
 
 ---
 
 ## 16. Spec-First Invariant Matrix & Topological Execution
-- **Pre-Implementation Matrix**: Construct a formal invariant matrix before modifying production logic.
-- **Contract Specification**: Define pre-conditions, post-conditions, invariants maintained, and boundary error behaviors for every component.
-- **Topological Ordering**: Sequence development tasks by dependency tiers. Complete contract interfaces before tests, tests before domain logic, and domain logic before integration.
+
+- **Pre-Implementation Matrix**: for non-trivial logic, list pre-conditions, post-conditions and invariants before you write code.
+- **Topological Ordering**: contracts, then tests, then domain logic, then integration.

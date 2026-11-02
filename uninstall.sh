@@ -12,6 +12,12 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 
 echo "=== Uninstalling Antigravity Dev Suite ==="
 
+# 0. Remove hooks from ~/.gemini/config/hooks.json (other hooks are kept)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+if command -v python3 >/dev/null 2>&1; then
+  python3 "${SCRIPT_DIR}/scripts/setup_hooks.py" uninstall || true
+fi
+
 # 1. Remove plugin link
 if [ -L "${TARGET_PLUGIN_DIR}" ] || [ -d "${TARGET_PLUGIN_DIR}" ]; then
   rm -rf "${TARGET_PLUGIN_DIR}"
