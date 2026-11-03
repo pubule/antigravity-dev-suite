@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.20.0] — 2026-11-03
+
+### 🧭 Discipline checks
+Habits that separate careful work from fast work, now enforced by the gate.
+
+- **Read before write.** PostToolUse now also runs for `run_command` and read tools (`view_file`, `grep_search`, ...) and records every existing file mentioned in a tool call or result. PreToolUse refuses `replace_file_content`, `multi_replace_file_content` and overwrites of non-empty files that agy has not seen in the conversation. It fails open until a read tool reaches the hook. Off: `"read_before_write": false` / `AGY_READ_BEFORE_WRITE=0`.
+- **Tests must fail without the change** (review). The changed test files run on the base commit in a temporary worktree, scoped to those files for pytest, Jest, Vitest and npm test. Passing there means they do not test the change.
+- **Lint on changed lines** (failure). Without `lint_command`, ESLint and Ruff run when the project already uses them, and only findings on changed lines count.
+- **Public API and diff hygiene** (review). `api_contract_guard.py` and `diff_guard.py` now run in the gate against the session's base commit (`diff_guard` gained a `base_ref` parameter).
+- **Reviews**: findings that may be intended block once with an explanation; the next stop on the same content is allowed. Reviews run only when all hard checks pass, and not in the pre-commit mode.
+- New module `scripts/base_worktree.py` (shared by the visual baseline and the test proof). It now also links `.venv` / `venv`.
+
+---
+
 ## [1.19.0] — 2026-11-03
 
 ### 🔍 Visual QA compares before and after

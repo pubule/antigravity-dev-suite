@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.19.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.20.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -93,7 +93,7 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.19.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.20.0)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
@@ -133,6 +133,8 @@ antigravity-dev-suite/
 │   ├── install_git_hooks.py    # Native cross-platform pre-commit Git hook installer
 │   ├── pre_tool_guard.py       # PreToolUse safety guardrail (Blocks catastrophic commands & leaks)
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
+│   ├── discipline.py           # Stop gate discipline: tests fail on base commit, changed-line lint, API & diff review
+│   ├── base_worktree.py        # Temporary checkout of the base commit (node_modules/venv linked)
 │   ├── visual_gate.py          # Stop gate visual step: dev server, page selection, blocking report
 │   └── visual_qa.py            # Playwright dual-viewport screenshot engine with WCAG 2.1 AA a11y audit
 ├── tests/                      # Automated Verification & TDD Suite
@@ -213,12 +215,25 @@ powershell -ExecutionPolicy Bypass -File .\update.ps1   # Windows
 | Hook | When | What it does |
 |---|---|---|
 | `SessionStart` | new conversation | remembers the starting commit, so committed changes are still checked |
-| `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, and gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`) |
-| `PostToolUse` | after `write_to_file` / `replace_file_content` / `multi_replace_file_content` | syntax probe of the written file |
+| `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`), and edits to files agy has not opened in this conversation |
+| `PostToolUse` | after file writes, `run_command` and read tools (`view_file`, `grep_search`, ...) | syntax probe of the written file; records which files agy has seen |
 | `PreInvocation` | before each model call | feeds open syntax errors back to the model |
-| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint (if configured), tests and, for UI changes, visual QA on all changed files; blocks with the full report until they pass |
+| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint, tests and, for UI changes, visual QA on all changed files; blocks with the full report until they pass. Then asks for one review turn when needed (see below) |
 
 The gate runs the checks itself; it never trusts a "PASS" written by the agent. Run it by hand with `python3 scripts/agy_hook.py check [project]`. The pre-commit hook (`install_git_hooks.py`) runs the same gate without the browser step (`check --no-visual`).
+
+### Discipline checks
+These make a fast model work like a careful one.
+
+| Check | Kind | What it does |
+|---|---|---|
+| **Read before write** | block (PreToolUse) | An edit to an existing file that agy has not opened (or seen in a tool result) in this conversation is refused. It fails open: nothing is refused until a read tool has reached the hook once. Off: `"read_before_write": false` or `AGY_READ_BEFORE_WRITE=0`. |
+| **Lint on changed lines** | failure | Without `lint_command`, the gate runs ESLint (when installed in `node_modules` with a config) and Ruff (when the project has a Ruff config) on the changed files, and keeps only findings on lines the change touched. Legacy warnings never block. Off: `"lint_changed_lines": false`. |
+| **Tests must fail without the change** | review | The changed tests run on the base commit (temporary worktree, scoped to those files for pytest, Jest, Vitest and npm test). If they pass there too, they prove nothing: agy must make them check the changed behaviour, or say it is a pure refactor. Off: `"prove_tests": false`. |
+| **Public API changed** | review | Exported symbols removed or with changed signatures (`api_contract_guard.py`). agy must check every caller. Off: `"api_guard": false`. |
+| **Deleted comments or large blocks** | review | Comment and docstring stripping, large deletions, nesting blow-ups (`diff_guard.py`). Off: `"diff_guard": false`. |
+
+A **review** blocks the stop once with the findings and asks agy to answer them; the next stop on the same content is allowed. Reviews run only when all hard checks pass.
 
 ### Visual QA of UI changes
 When the change touches `.tsx .jsx .vue .svelte .astro .html .css .scss .sass .less` (tests and stories excluded), the gate opens the page in headless Chromium at 1280x800 and 375x667. It blocks on JS exceptions, console errors, failed same-origin requests (HTTP 4xx/5xx), horizontal overflow on mobile, and WCAG violations (`lang`, `<title>`, `alt`, button names). The report lists the screenshots and tells agy to open them.
@@ -247,6 +262,11 @@ Only you edit this file; the guard blocks the agent from writing it.
   "test_exempt": ["src/generated/*"],
   "test_timeout": 600,
   "critic": true,
+  "read_before_write": true,
+  "lint_changed_lines": true,
+  "prove_tests": true,
+  "api_guard": true,
+  "diff_guard": true,
   "visual_qa": {
     "url": "http://localhost:5173",
     "dev_command": "npm run dev -- --port {port}",
@@ -269,6 +289,7 @@ Without it the gate auto-detects the test command (pytest, vitest/jest, cargo, g
 | `AGY_REQUIRE_TESTS=0` | turn off the test-first rule |
 | `AGY_TEST_TIMEOUT=600` | seconds for each test/typecheck/lint command |
 | `AGY_VISUAL_QA=0` | turn the visual QA step off |
+| `AGY_READ_BEFORE_WRITE=0` | allow edits to files agy has not opened |
 | `AGY_PRE_TOOL_GUARD=0` | turn the PreToolUse guard off |
 | `AGY_HOOK_DEBUG=1` | log raw hook payloads to `~/.gemini/agy-hook-debug.log` |
 

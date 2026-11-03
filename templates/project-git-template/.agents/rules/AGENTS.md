@@ -12,16 +12,20 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
    - syntax and structure of each changed file;
    - static critic (secrets, empty `except`, mutable defaults, quadratic traps, unsafe patterns);
    - **test-first**: a changed production file needs a new or changed test file;
-   - typecheck and lint, when the project configures them;
+   - typecheck, and lint on the lines you changed;
    - the project test suite;
    - **visual QA** when you change UI files (`.tsx .jsx .vue .svelte .astro .html .css .scss`): the gate opens the page in Chromium at 1280x800 and 375x667, compares it with the base commit, and blocks on new JS errors, console errors, failed requests, mobile overflow and WCAG violations. Pages that look different must be reviewed once.
 2. **If the gate blocks you**, the reason lists each failure. Fix the cause. Then finish again.
+   - **Review points** ("needs a second look") are not failures. Answer each one: fix it, or say why it is intended. Then finish again.
+   - "Your tests pass without your change" means your test proves nothing. Make it fail on the old code.
+   - "Public API changed" means callers may break. Check every caller before you finish.
 3. **Never weaken the checks.** Do not delete, skip or loosen tests. Do not add `# nosec` to silence a finding you did not fix. Do not edit `.agents/agy.json`. Do not use `--no-verify`. The guard blocks these actions.
 4. **Run the gate yourself** before you finish. Use the command from the gate message, or:
    - macOS / Linux: `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/agy_hook.py check`
    - Windows: `py -3 $HOME\.gemini\config\plugins\antigravity-dev-suite\scripts\agy_hook.py check`
 5. **Report only verified results.** Quote the real command output. Never write "tests pass" without output that shows it.
 6. **Syntax errors come back immediately.** After a bad edit, the next turn starts with the error. Fix it first.
+7. **Read before you edit.** The guard refuses an edit to a file you have not opened in this conversation. Open it with `view_file` first.
 
 ---
 

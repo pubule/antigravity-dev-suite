@@ -93,7 +93,7 @@ class TestHookRegistration(Base):
         post = entry["PostToolUse"][0]["matcher"]
         for tool in REAL_FILE_TOOLS + ["run_command"]:
             self.assertTrue(re.fullmatch(pre, tool), tool)
-        for tool in REAL_FILE_TOOLS:
+        for tool in REAL_FILE_TOOLS + ["view_file", "grep_search", "run_command"]:
             self.assertTrue(re.fullmatch(post, tool), tool)
         self.assertGreaterEqual(entry["Stop"][0]["timeout"], 300)
         for event in ("SessionStart", "PreToolUse", "PostToolUse", "PreInvocation", "Stop"):
@@ -463,6 +463,138 @@ class TestVisualBaseline(TestVisualGate):
         self.assertTrue((self.repo / "node_modules" / "pkg" / "index.js").is_file())
         res = subprocess.run(["git", "worktree", "list"], cwd=str(self.repo), capture_output=True, text=True)
         self.assertEqual(len(res.stdout.strip().splitlines()), 1, res.stdout)
+
+
+class TestDiscipline(Base):
+    """PR 3: tests must fail without the change, lint on changed lines, API review, read before write."""
+
+    def setUp(self):
+        super().setUp()
+        try:
+            import pytest  # noqa: F401
+            self.has_pytest = True
+        except ImportError:
+            self.has_pytest = False
+
+    def commit_all(self, msg):
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", msg)
+        conv = f"conv-{msg}"
+        run_json(["session-start"], dict(self.base, conversationId=conv), self.env)
+        self.base = dict(self.base, conversationId=conv)
+
+    def calc(self, body):
+        self.write("src/calc/__init__.py", "")
+        self.write("src/calc/ops.py", body)
+
+    TEST = TestStopGate.GOOD_TEST
+
+    def test_scoped_test_command(self):
+        from discipline import scoped_test_command
+        self.assertEqual(scoped_test_command("pytest -v", ["tests/test_a.py"]), "pytest -v tests/test_a.py")
+        self.assertEqual(scoped_test_command("npm test", ["a.test.ts"]), "npm test -- a.test.ts")
+        self.assertEqual(scoped_test_command("cargo test", ["x.rs"]), "cargo test")
+
+    def test_test_that_passes_on_old_code_needs_review(self):
+        if not self.has_pytest:
+            self.skipTest("pytest not installed")
+        self.calc("def add(a: int, b: int) -> int:\n    return a + b\n")
+        self.commit_all("base")
+        self.calc("def add(a: int, b: int) -> int:\n    total = a + b\n    return total\n")
+        self.write("tests/test_ops.py", self.TEST)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Your tests pass without your change", out["reason"])
+        self.assertEqual(self.stop()["decision"], "allow")  # one review turn only
+
+    def test_test_that_fails_on_old_code_is_proof(self):
+        if not self.has_pytest:
+            self.skipTest("pytest not installed")
+        self.calc("def add(a: int, b: int) -> int:\n    return a - b\n")
+        self.commit_all("buggy")
+        self.calc("def add(a: int, b: int) -> int:\n    return a + b\n")
+        self.write("tests/test_ops.py", self.TEST)
+        self.assertEqual(self.stop()["decision"], "allow")
+        res = subprocess.run(["git", "worktree", "list"], cwd=str(self.repo), capture_output=True, text=True)
+        self.assertEqual(len(res.stdout.strip().splitlines()), 1, res.stdout)
+
+    def test_public_api_change_needs_review(self):
+        self.calc("def add(a: int, b: int) -> int:\n    return a + b\n")
+        self.commit_all("api")
+        self.calc("def add(a: int) -> int:\n    return a\n")
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        (self.repo / "pytest.ini").unlink()
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Public API changed", out["reason"])
+        self.assertIn("symbol_impact.py", out["reason"])
+
+    def test_changed_lines(self):
+        from discipline import changed_lines
+        self.write("a.py", "x = 1\ny = 2\nz = 3\n")
+        self.commit_all("lines")
+        self.write("a.py", "x = 1\ny = 20\nz = 3\nw = 4\n")
+        self.assertEqual(changed_lines(self.repo, "HEAD", "a.py"), {2, 4})
+        self.write("new.py", "a = 1\n")
+        self.assertIsNone(changed_lines(self.repo, "HEAD", "new.py"))
+
+    def test_lint_blocks_only_on_changed_lines(self):
+        import shutil as _sh
+        if not _sh.which("ruff"):
+            self.skipTest("ruff not installed")
+        self.write("ruff.toml", "[lint]\nselect = ['F401']\n")
+        self.write("src/legacy.py", "import os\nimport sys\n\nVALUE = 1\n")
+        self.commit_all("lint")
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        (self.repo / "pytest.ini").unlink()
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "no-pytest")
+        # A change far from the old unused imports must not be blamed for them.
+        self.write("src/legacy.py", "import os\nimport sys\n\nVALUE = 2\n")
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "allow")
+        # A new unused import on a changed line blocks.
+        self.write("src/legacy.py", "import os\nimport sys\nimport json\n\nVALUE = 2\n")
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Lint findings on the lines you changed", out["reason"])
+        self.assertIn("json", out["reason"])
+        self.assertNotIn("`os`", out["reason"])
+
+
+class TestReadBeforeWrite(Base):
+    def tool(self, hook, name, args, **extra):
+        payload = dict(self.base, toolCall={"name": name, "args": args})
+        payload.update(extra)
+        return run_json([hook], payload, self.env)
+
+    def test_edit_of_unread_file_is_denied_after_reads_are_seen(self):
+        a = self.write("src/a.py", "A = 1\n")
+        b = self.write("src/b.py", "B = 1\n")
+        edit_b = {"TargetFile": str(b), "TargetContent": "B = 1", "ReplacementContent": "B = 2"}
+        # Fail open: before any read tool reached PostToolUse, edits are allowed.
+        self.assertEqual(self.tool("pre-tool", "replace_file_content", edit_b)["decision"], "allow")
+        self.tool("post-tool", "view_file", {"AbsolutePath": str(a)})
+        out = self.tool("pre-tool", "replace_file_content", edit_b)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("src/b.py", out["reason"])
+        edit_a = {"TargetFile": str(a), "TargetContent": "A = 1", "ReplacementContent": "A = 2"}
+        self.assertEqual(self.tool("pre-tool", "replace_file_content", edit_a)["decision"], "allow")
+        # Paths shown in a tool result count as seen too (grep output).
+        self.tool("post-tool", "grep_search", {"Query": "B ="}, toolResult={"output": "src/b.py:1: B = 1"})
+        self.assertEqual(self.tool("pre-tool", "replace_file_content", edit_b)["decision"], "allow")
+
+    def test_new_files_and_other_conversations(self):
+        a = self.write("src/a.py", "A = 1\n")
+        self.tool("post-tool", "view_file", {"AbsolutePath": str(a)})
+        new = {"TargetFile": str(self.repo / "src" / "new.py"), "CodeContent": "N = 1\n"}
+        self.assertEqual(self.tool("pre-tool", "write_to_file", new)["decision"], "allow")
+        other = dict(self.base, conversationId="other",
+                     toolCall={"name": "replace_file_content",
+                               "args": {"TargetFile": str(a), "TargetContent": "A", "ReplacementContent": "B"}})
+        # Another conversation has seen no read yet: fail open.
+        self.assertEqual(run_json(["pre-tool"], other, self.env)["decision"], "allow")
 
 
 class TestDoctor(Base):
