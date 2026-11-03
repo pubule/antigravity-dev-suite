@@ -15,6 +15,7 @@ import argparse
 import tempfile
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 COMMON_DEV_PORTS = [
     5173, 5174, 5175, 5176, 5177, 5178, 5179,
@@ -129,7 +130,24 @@ def audit_html_accessibility(html_content: str) -> list[str]:
 
     return violations
 
-def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = False, route: str = "", dev_server: str = "", port: int | None = None) -> int:
+def _origin(url: str) -> str:
+    """scheme://host:port of an http(s) URL; empty for file:// and others."""
+    p = urlparse(url)
+    if p.scheme not in ("http", "https") or not p.netloc:
+        return ""
+    return f"{p.scheme}://{p.netloc}".lower()
+
+
+DEFECT_KEYS = ("page_errors", "console_errors", "http_errors", "a11y_violations")
+
+
+def has_defects(result: dict) -> bool:
+    return any(result.get(k) for k in DEFECT_KEYS)
+
+
+def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = False, route: str = "", dev_server: str = "", port: int | None = None, fail_on_skip: bool = False) -> int:
+    """Inspect one page. Exit codes: 0 clean (or skipped), 1 defects or error, 3 skipped with fail_on_skip."""
+    skip_code = 3 if fail_on_skip else 0
     result = {
         "target": target,
         "status": "SUCCESS",
@@ -139,6 +157,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
         "page_errors": [],
         "a11y_violations": [],
         "a11y_warnings": [],
+        "http_errors": [],
         "warnings": []
     }
     
@@ -205,7 +224,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                         f"Component {file_path.name} requires an active dev server (e.g., Vite/Next on localhost:5173). None detected."
                     )
                     print(json.dumps(result, indent=2))
-                    return 0
+                    return skip_code
             else:
                 if not file_path.exists():
                     result["status"] = "ERROR"
@@ -229,7 +248,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                                 f"Directory '{file_path.name}' has no index.html and no active dev server was detected."
                             )
                             print(json.dumps(result, indent=2))
-                            return 0
+                            return skip_code
                 elif file_path.suffix.lower() not in [".html", ".htm", ".xhtml"]:
                     result["status"] = "SKIPPED_NOT_FRONTEND"
                     result["warnings"].append(
@@ -248,7 +267,7 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                 "Playwright is not installed in the current Python environment. Run 'pip install playwright && playwright install chromium' to enable visual QA."
             )
             print(json.dumps(result, indent=2))
-            return 0
+            return skip_code
 
         try:
             with sync_playwright() as p:
@@ -275,10 +294,19 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
                     # Create a single managed page with error listeners
                     page = browser.new_page(viewport={"width": 1280, "height": 800})
                     page.on("pageerror", lambda err: result["page_errors"].append(str(err)))
-                    page.on("response", lambda resp: (
-                        result["warnings"].append(f"HTTP {resp.status} on {resp.url}")
-                        if resp.status >= 400 else None
-                    ))
+                    page_origin = _origin(url)
+
+                    def handle_response(resp):
+                        if resp.status < 400 or resp.url.rstrip("/").endswith("favicon.ico"):
+                            return
+                        entry = f"HTTP {resp.status} on {resp.url}"
+                        # Same-origin failures are defects of the app; third-party ones stay warnings.
+                        if page_origin and _origin(resp.url) == page_origin:
+                            result["http_errors"].append(entry)
+                        else:
+                            result["warnings"].append(entry)
+
+                    page.on("response", handle_response)
                     
                     # Separate fatal errors from non-fatal warnings
                     def handle_console(msg):
@@ -414,6 +442,10 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
             print(json.dumps(result, indent=2))
             return 1
 
+        if has_defects(result):
+            result["status"] = "FAIL"
+            print(json.dumps(result, indent=2))
+            return 1
         print(json.dumps(result, indent=2))
         return 0
 
@@ -433,6 +465,7 @@ def main():
     parser.add_argument("--dev-server", default="", help="Explicit dev server base URL (e.g. http://localhost:3000)")
     parser.add_argument("--port", type=int, default=None, help="Explicit port to probe for dev server (e.g. 3000)")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
+    parser.add_argument("--fail-on-skip", action="store_true", help="Exit 3 instead of 0 when the page cannot be inspected (no Playwright, no dev server)")
     
     args = parser.parse_args()
     is_test = args.test_mode or (args.target == "--test-mode")
@@ -444,7 +477,8 @@ def main():
         test_mode=is_test,
         route=args.route,
         dev_server=args.dev_server,
-        port=args.port
+        port=args.port,
+        fail_on_skip=args.fail_on_skip,
     ))
 
 if __name__ == "__main__":

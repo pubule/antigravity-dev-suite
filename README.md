@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.17.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.18.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -93,7 +93,7 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.17.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.18.0)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
@@ -133,6 +133,7 @@ antigravity-dev-suite/
 │   ├── install_git_hooks.py    # Native cross-platform pre-commit Git hook installer
 │   ├── pre_tool_guard.py       # PreToolUse safety guardrail (Blocks catastrophic commands & leaks)
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
+│   ├── visual_gate.py          # Stop gate visual step: dev server, page selection, blocking report
 │   └── visual_qa.py            # Playwright dual-viewport screenshot engine with WCAG 2.1 AA a11y audit
 ├── tests/                      # Automated Verification & TDD Suite
 │   └── test_plugin_suite.py    # Full unit and integration test suite (400+ automated checks)
@@ -160,9 +161,9 @@ cd antigravity-dev-suite
 chmod +x install.sh
 ./install.sh
 
-# Optional: Install Playwright Chromium browser binaries (~150MB)
-./install.sh --with-browsers
-# or set AGY_INSTALL_BROWSERS=1 ./install.sh
+# Chromium (~150MB) is installed for the visual QA gate. To skip it:
+./install.sh --no-browsers
+# or AGY_INSTALL_BROWSERS=0 ./install.sh
 ```
 
 ### 🪟 Windows (PowerShell 5.1 / 7+)
@@ -174,8 +175,8 @@ cd antigravity-dev-suite
 # Run 1-Click installer (Bypass only affects this run, if scripts are blocked)
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 
-# Optional: Install Playwright Chromium browser binaries
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -WithBrowsers
+# Chromium is installed for the visual QA gate. To skip it:
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoBrowsers
 ```
 
 Requirements: Python 3.9+ (the macOS system `python3` works) and git. The installer:
@@ -215,9 +216,20 @@ powershell -ExecutionPolicy Bypass -File .\update.ps1   # Windows
 | `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, and gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`) |
 | `PostToolUse` | after `write_to_file` / `replace_file_content` / `multi_replace_file_content` | syntax probe of the written file |
 | `PreInvocation` | before each model call | feeds open syntax errors back to the model |
-| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint (if configured) and tests on all changed files; blocks with the full report until they pass |
+| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint (if configured), tests and, for UI changes, visual QA on all changed files; blocks with the full report until they pass |
 
-The gate runs the checks itself; it never trusts a "PASS" written by the agent. Run it by hand with `python3 scripts/agy_hook.py check [project]`. The pre-commit hook (`install_git_hooks.py`) runs the same gate.
+The gate runs the checks itself; it never trusts a "PASS" written by the agent. Run it by hand with `python3 scripts/agy_hook.py check [project]`. The pre-commit hook (`install_git_hooks.py`) runs the same gate without the browser step (`check --no-visual`).
+
+### Visual QA of UI changes
+When the change touches `.tsx .jsx .vue .svelte .astro .html .css .scss .sass .less` (tests and stories excluded), the gate opens the page in headless Chromium at 1280x800 and 375x667. It blocks on JS exceptions, console errors, failed same-origin requests (HTTP 4xx/5xx), horizontal overflow on mobile, and WCAG violations (`lang`, `<title>`, `alt`, button names). The report lists the screenshots and tells agy to open them.
+
+Which page it opens, first match wins:
+1. `visual_qa.url` (+ `routes`). If nothing answers there and `dev_command` is set, the gate starts the command, waits up to `startup_timeout` seconds, checks, and stops the whole process tree.
+2. `dev_command` alone: the gate starts it and uses the first new local dev port.
+3. Changed static HTML files (not server templates such as Jinja or Django), opened from disk.
+4. A dev server already running on a common local port (5173, 3000, 8080, ...).
+
+If none works, or Playwright/Chromium is missing, the gate blocks with the exact fix. It never skips in silence. `agy_hook.py doctor` reports whether Chromium is ready.
 
 ### Project configuration (optional): `.agents/agy.json`
 Only you edit this file; the guard blocks the agent from writing it.
@@ -229,9 +241,17 @@ Only you edit this file; the guard blocks the agent from writing it.
   "require_tests": true,
   "test_exempt": ["src/generated/*"],
   "test_timeout": 600,
-  "critic": true
+  "critic": true,
+  "visual_qa": {
+    "url": "http://localhost:5173",
+    "dev_command": "npm run dev",
+    "routes": ["/", "/login"],
+    "startup_timeout": 90,
+    "timeout": 90
+  }
 }
 ```
+Set `"visual_qa": false` for a project without a UI to check.
 Without it the gate auto-detects the test command (pytest, vitest/jest, cargo, go, maven/gradle, ...) and runs `tsc` only when it is installed in `node_modules`.
 
 ### Environment variables (set by you, never by the agent)
@@ -241,6 +261,7 @@ Without it the gate auto-detects the test command (pytest, vitest/jest, cargo, g
 | `AGY_STOP_GATE_MAX_BLOCKS=4` | stops allowed without any file change before the gate gives up (prevents endless loops) |
 | `AGY_REQUIRE_TESTS=0` | turn off the test-first rule |
 | `AGY_TEST_TIMEOUT=600` | seconds for each test/typecheck/lint command |
+| `AGY_VISUAL_QA=0` | turn the visual QA step off |
 | `AGY_PRE_TOOL_GUARD=0` | turn the PreToolUse guard off |
 | `AGY_HOOK_DEBUG=1` | log raw hook payloads to `~/.gemini/agy-hook-debug.log` |
 
@@ -363,6 +384,9 @@ python3 scripts/visual_qa.py --port 3000
 
 # Run in self-test synthetic mode
 python3 scripts/visual_qa.py --test-mode
+
+# Exit codes: 0 clean, 1 defects or error, 3 skipped (only with --fail-on-skip)
+python3 scripts/visual_qa.py http://localhost:5173 --fail-on-skip
 ```
 
 ### 7. Semantic Symbol Slicer (`semantic_slice.py`)

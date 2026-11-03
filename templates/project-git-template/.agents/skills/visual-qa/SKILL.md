@@ -9,6 +9,8 @@ description: Dual-viewport Playwright visual QA inspector for desktop (1280x800)
 
 Use this skill whenever modifying or creating user interfaces, web layouts, HTML, CSS, React, Next.js, Vue, or Svelte components.
 
+> **Enforced.** When you change a UI file (`.tsx .jsx .vue .svelte .astro .html .css .scss`), the Stop gate runs this check by itself and blocks while it fails. Run it yourself first, so you find the defects before the gate does.
+
 ---
 
 ## 📐 Dual-Viewport Specification
@@ -31,13 +33,20 @@ python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/visual_qa.py http
 # Or for static HTML files:
 python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/visual_qa.py path/to/page.html
 ```
+Exit code 0 means a clean page. Exit code 1 means defects: read `page_errors`, `console_errors`, `http_errors` and `a11y_violations` in the JSON output.
+Then open `desktop_preview.png` and `mobile_preview.png` (paths in `screenshots`) and look at them.
 
-### Method 2: Playwright MCP Tools
-When the Playwright MCP server is active, invoke:
-1. `browser_navigate` to target URL.
-2. `browser_set_viewport_size` with `{ width: 1280, height: 800 }` and capture screenshot.
-3. `browser_set_viewport_size` with `{ width: 375, height: 667 }` and capture mobile screenshot.
-4. Check for console errors and `document.documentElement.scrollWidth > window.innerWidth`.
+### Method 0: The gate itself
+`python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/agy_hook.py check` runs the same visual step as the Stop gate, with the dev server settings from `.agents/agy.json`.
+
+### Method 2: Playwright MCP Tools (interaction)
+Use this to test what a static screenshot cannot show: menus, modals, forms, navigation.
+When the Playwright MCP server (`@playwright/mcp`) is active:
+1. `browser_navigate` to the target URL.
+2. `browser_resize` with `{ "width": 1280, "height": 800 }`, then `browser_take_screenshot`.
+3. `browser_snapshot` to read the page structure, then `browser_click` / `browser_type` to use the feature you changed.
+4. `browser_resize` with `{ "width": 375, "height": 667 }`, then `browser_take_screenshot` again.
+5. `browser_console_messages` must show zero errors. `browser_evaluate` with `() => document.documentElement.scrollWidth > window.innerWidth` must return `false`.
 
 ---
 

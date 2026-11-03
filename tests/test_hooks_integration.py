@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -59,7 +60,7 @@ class Base(unittest.TestCase):
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.env = {"HOME": str(self.home), "USERPROFILE": str(self.home), "GEMINI_HOME": str(self.home / ".gemini")}
-        for k in ("AGY_STOP_GATE_DISABLE", "AGY_REQUIRE_TESTS", "AGY_PRE_TOOL_GUARD", "AGY_AUTO_DEBUG"):
+        for k in ("AGY_STOP_GATE_DISABLE", "AGY_REQUIRE_TESTS", "AGY_PRE_TOOL_GUARD", "AGY_AUTO_DEBUG", "AGY_VISUAL_QA"):
             os.environ.pop(k, None)
         self.repo = self.tmp / "proj"
         self.repo.mkdir()
@@ -283,6 +284,116 @@ class TestStopGate(Base):
         res = run(["check", str(self.repo)], env=self.env)
         self.assertEqual(res.returncode, 1)
         self.assertIn("RESULT: FAIL", res.stdout)
+
+
+def playwright_ready() -> bool:
+    try:
+        from agy_hook import visual_qa_status
+        return visual_qa_status()[0]
+    except Exception:
+        return False
+
+
+def free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+BROKEN_PAGE = (
+    "<!doctype html><html lang=\"en\"><head><title>t</title></head><body>"
+    "<div style=\"width:900px\">wide</div><script>throw new Error('boom')</script></body></html>\n"
+)
+CLEAN_PAGE = (
+    "<!doctype html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width\">"
+    "<title>t</title></head><body><p>hello</p></body></html>\n"
+)
+
+
+class TestVisualGate(Base):
+    def setUp(self):
+        super().setUp()
+        run_json(["session-start"], self.base, self.env)
+        # No Python test suite here: only the visual step matters.
+        (self.repo / "pytest.ini").unlink()
+        self.write(".agents/agy.json", json.dumps({"require_tests": False}))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "config")
+
+    def config(self, cfg):
+        cfg = dict(cfg, require_tests=False)
+        self.write(".agents/agy.json", json.dumps(cfg))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "config")
+        run_json(["session-start"], dict(self.base, conversationId="conv-cfg"), self.env)
+        self.base = dict(self.base, conversationId="conv-cfg")
+
+    def test_frontend_file_selection(self):
+        from visual_gate import frontend_files
+        files = ["src/App.tsx", "src/App.test.tsx", "styles/a.css", "server/api.ts",
+                 "e2e/home.spec.ts", "src/Button.stories.tsx", "index.html", "app.py"]
+        self.assertEqual(frontend_files(files), ["src/App.tsx", "styles/a.css", "index.html"])
+
+    def test_server_templates_are_not_opened_from_disk(self):
+        from visual_gate import static_html_targets
+        self.write("templates/page.html", "<html>{% block body %}{% endblock %}</html>")
+        self.write("public/index.html", CLEAN_PAGE)
+        targets = static_html_targets(self.repo, ["templates/page.html", "public/index.html"])
+        self.assertEqual(len(targets), 1)
+        self.assertTrue(targets[0].endswith("index.html"))
+
+    def test_user_can_turn_visual_qa_off(self):
+        self.config({"visual_qa": False})
+        self.write("index.html", BROKEN_PAGE)
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_env_turns_visual_qa_off(self):
+        self.write("index.html", BROKEN_PAGE)
+        payload = dict(self.base, terminationReason="model_stop")
+        self.assertEqual(run_json(["stop"], payload, dict(self.env, AGY_VISUAL_QA="0"))["decision"], "allow")
+
+    def test_unreachable_url_blocks_with_instructions(self):
+        self.config({"visual_qa": {"url": f"http://127.0.0.1:{free_port()}"}})
+        self.write("src/App.tsx", "export const App = () => <p>hi</p>;\n")
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("dev server not running", out["reason"])
+
+    def test_pre_commit_mode_skips_the_browser(self):
+        self.config({"visual_qa": {"url": f"http://127.0.0.1:{free_port()}"}})
+        self.write("src/App.tsx", "export const App = () => <p>hi</p>;\n")
+        res = run(["check", "--no-visual", str(self.repo)], env=self.env)
+        self.assertEqual(res.returncode, 0, res.stdout)
+
+    def test_broken_page_blocks_and_clean_page_passes(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        self.write("index.html", BROKEN_PAGE)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Visual QA found defects", out["reason"])
+        self.assertIn("boom", out["reason"])
+        self.assertIn("HorizontalOverflowDetected", out["reason"])
+        self.assertIn("mobile_preview.png", out["reason"])
+        self.write("index.html", CLEAN_PAGE)
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_dev_command_is_started_and_stopped(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        port = free_port()
+        self.write("site/index.html", CLEAN_PAGE.replace("<p>", "<script src=\"/missing.js\"></script><p>"))
+        py = f'"{sys.executable}"' if " " in sys.executable else sys.executable
+        self.config({"visual_qa": {"url": f"http://127.0.0.1:{port}",
+                                   "dev_command": f"{py} -m http.server {port} --bind 127.0.0.1 --directory site"}})
+        self.write("site/app.css", "p { color: red; }\n")
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("HTTP 404", out["reason"])
+        from visual_qa import is_http_server_active
+        time.sleep(0.5)
+        self.assertFalse(is_http_server_active(port, "127.0.0.1"), "dev server left running")
 
 
 class TestDoctor(Base):

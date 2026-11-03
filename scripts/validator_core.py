@@ -385,6 +385,147 @@ def strip_jsonc_comments(content: str) -> str:
 
     return "".join(out)
 
+# JSX element start: a tag right after a token that begins an expression.
+_JSX_START_RE = re.compile(r"(?:^|[(\[{,;:?=&|!>]|=>|\breturn|\byield|\bdefault)\s*(<(?:[A-Za-z][\w.:-]*)?)")
+_JSX_QUOTES = {"'", '"', "`"}
+
+
+def _skip_js_string(text: str, i: int) -> int:
+    """Index after the JS string/template that starts at text[i]."""
+    quote = text[i]
+    i += 1
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == quote or (c == "\n" and quote != "`"):
+            return i + 1
+        i += 1
+    return i
+
+
+def _skip_jsx_tag(text: str, i: int) -> tuple:
+    """From '<' at text[i], return (index after '>', is_closing, is_self_closing) or None."""
+    n = len(text)
+    closing = i + 1 < n and text[i + 1] == "/"
+    j = i + 1
+    depth = 0
+    while j < n:
+        c = text[j]
+        if c in _JSX_QUOTES and depth == 0:
+            j = _skip_js_string(text, j)
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif c == ">" and depth <= 0:
+            return j + 1, closing, text[j - 1] == "/"
+        elif c == "\n" and text.count("\n", i, j) > 40:
+            return None
+        j += 1
+    return None
+
+
+_JSX_EXPR_START_RE = re.compile(r"(?:[(\[{,;:?=&|!>]|=>|\breturn|\byield|\bdefault)\s*$")
+
+
+def _jsx_may_start(text: str, i: int) -> bool:
+    """True when the '<' at text[i] sits where an expression (so a JSX element) can begin."""
+    return bool(_JSX_EXPR_START_RE.search(text[max(0, i - 12):i]))
+
+
+def _skip_js_braces(text: str, i: int, chars: list) -> int:  # chars: quote positions found
+    """From '{' at text[i], index after its matching '}'. Strings are honoured and
+    JSX nested in the expression ({ok && <b>it's</b>}) is scanned as JSX."""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in _JSX_QUOTES:
+            i = _skip_js_string(text, i)
+            continue
+        if c == "<" and _jsx_may_start(text, i):
+            mark = len(chars)
+            end = _scan_jsx_element(text, i, chars)
+            if end > i:
+                i = end
+                continue
+            del chars[mark:]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _scan_jsx_element(text: str, start: int, chars: list) -> int:
+    """Scan the JSX element at text[start] ('<'). Append to `chars` the index of each
+    quote in its text children and return the index after the element: `start` when
+    it is not a JSX element, -1 when the element never closes."""
+    tag = _skip_jsx_tag(text, start)
+    if tag is None or tag[1]:
+        return start
+    i, _closing, self_closing = tag
+    if self_closing:
+        return i
+    n = len(text)
+    depth = 1
+    while i < n and depth > 0:
+        c = text[i]
+        if c == "<":
+            nxt = _skip_jsx_tag(text, i)
+            if nxt is None:
+                return -1
+            i, closing, self_closing = nxt
+            if closing:
+                depth -= 1
+            elif not self_closing:
+                depth += 1
+            continue
+        if c == "{":
+            i = _skip_js_braces(text, i, chars)
+            continue
+        if c in _JSX_QUOTES:
+            chars.append(i)
+        i += 1
+    return i if depth == 0 else -1
+
+
+def blank_jsx_text(content: str) -> str:
+    """Replace quote characters inside JSX text (<p>Don't</p>) with spaces.
+
+    JSX text is not JavaScript: an apostrophe there is plain text, but the
+    delimiter scanner would read it as an unclosed string. Positions and line
+    numbers are preserved. Code outside JSX children is left untouched.
+    """
+    if "<" not in content or not any(q in content for q in _JSX_QUOTES):
+        return content
+    blanks: list = []
+    pos = 0
+    while True:
+        m = _JSX_START_RE.search(content, pos)
+        if not m:
+            break
+        start = m.start(1)
+        mark = len(blanks)
+        end = _scan_jsx_element(content, start, blanks)
+        if end > start:
+            pos = end
+        else:
+            del blanks[mark:]  # not JSX, or never closed: leave the code as it is
+            pos = m.end(1)
+    if not blanks:
+        return content
+    chars = list(content)
+    for idx in blanks:
+        chars[idx] = " "
+    return "".join(chars)
+
 def validate_code_file(file_path: Path) -> list[str]:
     """Validates source file syntax and structural delimiter balance. Returns list of error messages."""
     suffix = file_path.suffix.lower()
@@ -399,6 +540,9 @@ def validate_code_file(file_path: Path) -> list[str]:
             content = f.read()
     except Exception as e:
         return [f"ReadError in {file_path.name}: {str(e)}"]
+
+    if suffix in (".jsx", ".tsx", ".js"):
+        content = blank_jsx_text(content)
 
     # 1. Python AST Validation (.py, .pyi)
     if suffix in [".py", ".pyi"]:
@@ -810,6 +954,11 @@ def validate_code_file(file_path: Path) -> list[str]:
                     elif char == '/' and not in_regex_class:
                         in_regex = False
                         last_token = '/'
+                    i += 1
+                    continue
+                elif string_mode is None and char == '/' and i > 0 and content[i - 1] == '<':
+                    # '</' is a JSX/TSX closing tag (</div>), never a regex literal.
+                    last_token = '/'
                     i += 1
                     continue
                 elif string_mode is None and char == '/':

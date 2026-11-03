@@ -50,12 +50,15 @@ else
     || echo "  ℹ Notice: Playwright python module could not be installed automatically. Visual QA will run in fallback mode."
 fi
 
-# Attempt Chromium browser install
-if [ "${AGY_INSTALL_BROWSERS:-0}" = "1" ] || [ "${1:-}" = "--with-browsers" ]; then
-  echo "  ⏳ Installing Playwright Chromium browser binaries..."
-  playwright install chromium 2>/dev/null || "${PYTHON_BIN}" -m playwright install chromium 2>/dev/null || true
-else
-  echo "  ℹ Chromium installation skipped. Pass --with-browsers or run 'playwright install chromium' when needed for visual QA."
+# Chromium for the visual QA step of the Stop gate (about 150 MB, once).
+# Skip with --no-browsers or AGY_INSTALL_BROWSERS=0. --with-browsers is kept for compatibility.
+if [ "${AGY_INSTALL_BROWSERS:-1}" = "0" ] || [ "${1:-}" = "--no-browsers" ]; then
+  echo "  ℹ Chromium installation skipped. Frontend changes stay blocked until you run: ${PYTHON_BIN} -m playwright install chromium"
+elif "${PYTHON_BIN}" -c "import playwright" >/dev/null 2>&1; then
+  echo "  ⏳ Installing Playwright Chromium (bounded to 10 minutes)..."
+  "${PYTHON_BIN}" -c "import subprocess, sys; sys.exit(subprocess.run([sys.executable, '-m', 'playwright', 'install', 'chromium'], timeout=600).returncode)" >/dev/null 2>&1 \
+    && echo "  ✔ Chromium ready for visual QA." \
+    || echo "  ℹ Chromium could not be installed now. Run later: ${PYTHON_BIN} -m playwright install chromium"
 fi
 
 # 4. Link or install plugin bundle

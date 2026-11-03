@@ -9,6 +9,7 @@ Usage (the installer writes these commands into ~/.gemini/config/hooks.json):
     python agy_hook.py pre-invocation  # PreInvocation: feed syntax errors back to the model
     python agy_hook.py stop            # Stop: run the verification gate
     python agy_hook.py check [DIR]     # Run the same gate by hand (exit 1 on failure)
+    python agy_hook.py check --no-visual [DIR]  # Same, without the browser step
     python agy_hook.py doctor          # Self-test of the installation
 
 Design rules:
@@ -390,8 +391,9 @@ class CheckResult:
         self.failures.append((title, _shorten(detail)))
 
 
-def run_checks(root: Path, files: List[str], cfg: Dict[str, Any]) -> CheckResult:
-    """The verification gate. Cheap checks first; tests only when the code parses."""
+def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool = True) -> CheckResult:
+    """The verification gate. Cheap checks first; tests only when the code parses.
+    `visual=False` skips the browser step (used by the git pre-commit hook)."""
     result = CheckResult()
     code_files = [f for f in files if is_code(f)]
     if not code_files:
@@ -462,7 +464,31 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any]) -> CheckResult
         result.notes.append(
             "No test command found. Set \"test_command\" in .agents/agy.json to enable the test gate."
         )
+
+    # 5. Visual QA: open the changed UI in a browser (desktop + mobile).
+    if visual:
+        run_visual_step(root, code_files, cfg, result)
     return result
+
+
+def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], result: CheckResult) -> None:
+    try:
+        from visual_gate import frontend_files, run_visual_gate, visual_config
+        fe = frontend_files(code_files)
+        vcfg = visual_config(cfg)
+        if not fe:
+            return
+        if vcfg is None:
+            result.notes.append("Visual QA turned off for this project.")
+            return
+        outcome = run_visual_gate(root, fe, vcfg, state_dir(root) / "visual")
+        if outcome.ran:
+            result.ran.append("visual-qa")
+        result.notes.extend(outcome.notes)
+        for title, detail in outcome.failures:
+            result.fail(title, detail)
+    except Exception as e:
+        result.fail("Visual QA step crashed", f"{e}\n{traceback.format_exc(limit=3)}")
 
 
 def _read(p: Path) -> str:
@@ -683,7 +709,7 @@ def handle_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 # --------------------------------------------------------------------- CLI
 
-def cli_check(target: str) -> int:
+def cli_check(target: str, visual: bool = True) -> int:
     ws = Path(target or ".").expanduser().resolve()
     root = git_root(ws)
     if root is None:
@@ -694,16 +720,17 @@ def cli_check(target: str) -> int:
     cfg = load_project_config(root)
     print(f"Project: {root}")
     print(f"Changed files ({len(files)}): " + (", ".join(files[:20]) or "none"))
-    result = run_checks(root, files, cfg)
+    result = run_checks(root, files, cfg, visual=visual)
     for note in result.notes:
         print(f"Note: {note}")
     print(f"Checks run: {', '.join(result.ran) or 'none'}")
-    if result.ok:
+    if result.ok and visual:
         fp = fingerprint(root, files, json.dumps(cfg, sort_keys=True))
         cache = state.get("checks", {})
         cache[fp] = {"ok": True, "t": time.time()}
         state["checks"] = _trim_dict(cache, 20)
         save_state(root, state)
+    if result.ok:
         print("RESULT: PASS")
         return 0
     print(format_report(result, files))
@@ -751,8 +778,34 @@ def cli_doctor() -> int:
         dummy_secret = "AKIA" + "ABCDEFGHIJKLMNOP"
         secret = handle_pre_tool(dict(payload, toolCall={"name": "write_to_file", "args": {"TargetFile": "a.py", "CodeContent": f"k='{dummy_secret}'"}}))
         line(secret.get("decision") == "deny", "guard blocks a secret written with write_to_file")
+    # Visual QA is optional: report it, but do not fail the doctor for it.
+    pw = visual_qa_status()
+    print(("  OK   " if pw[0] else "  WARN ") + pw[1])
     print("RESULT: " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
+
+
+def visual_qa_status() -> Tuple[bool, str]:
+    """Can this interpreter launch headless Chromium through Playwright?"""
+    probe = (
+        "from playwright.sync_api import sync_playwright\n"
+        "with sync_playwright() as p:\n"
+        "    b = p.chromium.launch(headless=True, args=['--no-sandbox'])\n"
+        "    b.close()\n"
+    )
+    try:
+        res = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
+                             timeout=60, check=False, encoding="utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"Playwright Chromium check failed to run ({e})"
+    if res.returncode == 0:
+        return True, "Playwright + Chromium ready (visual QA of frontend changes)"
+    try:
+        from visual_gate import install_hint
+        hint = install_hint().splitlines()
+    except Exception:
+        hint = []
+    return False, "Playwright/Chromium missing: frontend changes will be blocked until installed.\n         " + "\n         ".join(hint[1:3])
 
 
 HANDLERS = {
@@ -777,7 +830,8 @@ def main(argv: List[str]) -> int:
         return 0
     cmd = argv[0]
     if cmd == "check":
-        return cli_check(argv[1] if len(argv) > 1 else ".")
+        rest = [a for a in argv[1:] if a != "--no-visual"]
+        return cli_check(rest[0] if rest else ".", visual="--no-visual" not in argv[1:])
     if cmd == "doctor":
         return cli_doctor()
     handler = HANDLERS.get(cmd)

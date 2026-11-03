@@ -4,6 +4,7 @@ Antigravity Pre-Commit Git Hook Installer (Cross-Platform)
 Installs or updates .git/hooks/pre-commit to enforce Claude Opus 5.5 quality gates:
 The hook runs `agy_hook.py check`, the same gate as the Antigravity Stop hook:
 syntax, static critic, test-first, typecheck/lint when configured, and tests.
+The browser step (visual QA) is skipped here to keep commits fast; the Stop gate runs it.
 Compatible with Windows, macOS, and Linux.
 """
 
@@ -31,7 +32,7 @@ if [ ! -f "$GATE_SCRIPT" ] || [ ! -f "$PYTHON_BIN" ]; then
 fi
 
 echo "🧠 [Antigravity] Running the pre-commit quality gate..."
-exec "$PYTHON_BIN" "$GATE_SCRIPT" check .
+exec "$PYTHON_BIN" "$GATE_SCRIPT" check --no-visual .
 """
 
 def find_git_root(start_dir: Path | None = None) -> Path | None:
