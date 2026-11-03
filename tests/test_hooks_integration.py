@@ -730,6 +730,78 @@ class TestGuidance(Base):
         self.assertIn("from an earlier task", out["reason"])
 
 
+class TestSecondOpinion(Base):
+    """A fake reviewer API on localhost: the hook must send the diff and turn findings into a review."""
+
+    def serve(self, reply):
+        import http.server
+        import threading
+        seen = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                seen["path"] = self.path
+                seen["headers"] = {k.lower(): v for k, v in self.headers.items()}
+                seen["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                data = json.dumps(reply).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}", seen
+
+    def setup_project(self, provider, url):
+        self.write(".agents/agy.json", json.dumps({"second_opinion": {"provider": provider, "url": url}}))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "cfg")
+        self.write("settings.json", '{"retries": 3}\n')
+        return dict(self.env, AGY_REQUIRE_TESTS="0", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+
+    def test_anthropic_findings_become_a_review(self):
+        finding = {"summary": "One bug.", "findings": [
+            {"severity": "major", "file": "settings.json", "line": 1, "issue": "retries must be 5", "fix": "set 5"},
+            {"severity": "minor", "file": "settings.json", "line": 1, "issue": "nit", "fix": "x"}]}
+        url, seen = self.serve({"stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(finding)}]})
+        env = dict(self.setup_project("anthropic", url), ANTHROPIC_API_KEY="test-key")
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Second opinion: 1 problem(s)", out["reason"])
+        self.assertIn("retries must be 5", out["reason"])
+        self.assertNotIn("nit", out["reason"])
+        self.assertEqual(seen["headers"].get("x-api-key"), "test-key")
+        self.assertEqual(seen["body"]["model"], "claude-opus-5-5")
+        self.assertEqual(seen["body"]["output_config"]["format"]["type"], "json_schema")
+        self.assertIn('+{"retries": 3}', seen["body"]["messages"][0]["content"])
+        self.assertEqual(run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)["decision"], "allow")
+
+    def test_gemini_clean_review_allows(self):
+        reply = {"candidates": [{"content": {"parts": [{"text": '{"summary": "Fine.", "findings": []}'}]}}]}
+        url, seen = self.serve(reply)
+        env = dict(self.setup_project("gemini", url + "/{model}"), GEMINI_API_KEY="g-key")
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertEqual(out["decision"], "allow")
+        self.assertEqual(seen["headers"].get("x-goog-api-key"), "g-key")
+        self.assertEqual(seen["path"], "/gemini-2.5-pro")
+
+    def test_no_key_or_refusal_never_blocks(self):
+        url, _ = self.serve({"stop_reason": "refusal", "content": []})
+        env = self.setup_project("anthropic", url)
+        env.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.assertEqual(run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)["decision"], "allow")
+        self.write("settings.json", '{"retries": 4}\n')
+        env["ANTHROPIC_API_KEY"] = "k"
+        self.assertEqual(run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)["decision"], "allow")
+
+
 class TestReadBeforeWrite(Base):
     def tool(self, hook, name, args, **extra):
         payload = dict(self.base, toolCall={"name": name, "args": args})

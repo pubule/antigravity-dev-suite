@@ -952,6 +952,28 @@ def apply_criteria(root: Path, cfg: Dict[str, Any], result: CheckResult, session
     result.reviews.extend(reviews)
 
 
+def apply_second_opinion(root: Path, cfg: Dict[str, Any], files: List[str], base: str, result: CheckResult) -> None:
+    """A stronger model reviews the diff once everything else passes (opt-in, needs an API key)."""
+    if not env_flag("AGY_SECOND_OPINION", True):
+        return
+    try:
+        from second_opinion import format_findings, review, settings
+        conf = settings(cfg)
+        if conf is None:
+            return
+        from guidance import criteria_fingerprint
+        status, findings, note = review(root, base, files, criteria_fingerprint(root), cfg)
+    except Exception as e:
+        result.notes.append(f"Second opinion skipped: {e}")
+        return
+    if note:
+        result.notes.append(note)
+    if status in ("ok", "issues"):
+        result.ran.append("second-opinion")
+    if findings:
+        result.reviews.append((f"Second opinion: {len(findings)} problem(s)", format_findings(conf["model"], findings)))
+
+
 def gate_extra(root: Path, cfg: Dict[str, Any]) -> str:
     """Everything besides the changed files that changes the gate's verdict."""
     extra = json.dumps(cfg, sort_keys=True)
@@ -1005,6 +1027,8 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         result = run_checks(root, files, cfg, base=base)
         apply_criteria(root, cfg, result, float(sess.get("t") or 0))
+        if result.ok:
+            apply_second_opinion(root, cfg, files, base, result)
         if result.ok and result.reviews:
             # Checks pass, but the UI changed: give agy one turn with the before/after images.
             # The next stop on the same content is allowed.
