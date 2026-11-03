@@ -27,6 +27,9 @@ HOOK_SCRIPT = SUITE_DIR / "scripts" / "agy_hook.py"
 HOOK_KEY = "antigravity-dev-suite"
 LEGACY_KEYS = ("antigravity-dev-suite-hooks",)
 FILE_TOOLS = "write_to_file|replace_file_content|multi_replace_file_content"
+# Tools that show file content to the model: PostToolUse records what agy has read,
+# so PreToolUse can refuse edits to files it never opened.
+READ_TOOLS = "view_file|view_file_outline|view_code_item|grep_search|find_by_name|list_dir|codebase_search"
 
 
 def gemini_home() -> Path:
@@ -79,7 +82,7 @@ def build_entry() -> Dict[str, Any]:
             "hooks": [{"type": "command", "command": hook_command("pre-tool"), "timeout": 10}],
         }],
         "PostToolUse": [{
-            "matcher": FILE_TOOLS,
+            "matcher": FILE_TOOLS + "|run_command|" + READ_TOOLS,
             "hooks": [{"type": "command", "command": hook_command("post-tool"), "timeout": 15}],
         }],
         "PreInvocation": [{"type": "command", "command": hook_command("pre-invocation"), "timeout": 15}],

@@ -31,13 +31,13 @@ def safe_git_env() -> Dict[str, str]:
     return env
 
 
-def get_git_diff_text(workspace_dir: Path, cached: bool = False) -> str:
-    """Executes git diff safely within sandbox boundaries."""
+def get_git_diff_text(workspace_dir: Path, cached: bool = False, base_ref: str = "HEAD") -> str:
+    """Executes git diff safely within sandbox boundaries (work tree against `base_ref`)."""
     cmd = ["git", "diff", "--unified=3"]
     if cached:
         cmd.append("--cached")
     else:
-        cmd.append("HEAD")
+        cmd.append(base_ref or "HEAD")
 
     try:
         proc = subprocess.run(
@@ -304,7 +304,8 @@ def parse_unified_diff(diff_text: str) -> Dict[str, Dict[str, Any]]:
 def audit_diff_guard(
     workspace_dir: Path,
     cached: bool = False,
-    specific_files: Optional[List[Path]] = None
+    specific_files: Optional[List[Path]] = None,
+    base_ref: str = "HEAD",
 ) -> Dict[str, Any]:
     """Audits workspace git diff against code hygiene, documentation, and KISS invariants."""
     ws = workspace_dir.resolve()
@@ -315,7 +316,7 @@ def audit_diff_guard(
         "details": {}
     }
 
-    diff_text = get_git_diff_text(ws, cached=cached)
+    diff_text = get_git_diff_text(ws, cached=cached, base_ref=base_ref)
     if not diff_text.strip():
         report["details"]["notice"] = "No git diff detected"
         return report
@@ -370,7 +371,7 @@ def audit_diff_guard(
 
         # Python-specific AST docstring and nesting checks
         if file_path.suffix.lower() in (".py", ".pyi"):
-            old_content = get_git_file_content(ws, rel_path, revision="HEAD")
+            old_content = get_git_file_content(ws, rel_path, revision=base_ref or "HEAD")
             if old_content:
                 py_viols, py_fixes = inspect_python_diff_hygiene(
                     ws, rel_path, old_content, new_content

@@ -9,7 +9,7 @@ Usage (the installer writes these commands into ~/.gemini/config/hooks.json):
     python agy_hook.py pre-invocation  # PreInvocation: feed syntax errors back to the model
     python agy_hook.py stop            # Stop: run the verification gate
     python agy_hook.py check [DIR]     # Run the same gate by hand (exit 1 on failure)
-    python agy_hook.py check --no-visual [DIR]  # Same, without the browser step
+    python agy_hook.py check --no-visual [DIR]  # Same, without the browser step and reviews
     python agy_hook.py doctor          # Self-test of the installation
 
 Design rules:
@@ -430,10 +430,10 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
 
     # 3. Test-first: production code changes need test changes.
     require_tests = cfg.get("require_tests", True) and env_flag("AGY_REQUIRE_TESTS", True)
+    exempt = DEFAULT_TEST_EXEMPT + [p for p in cfg.get("test_exempt", []) if isinstance(p, str)]
+    prod = [f for f in code_files if needs_test(f, exempt)]
+    tests = [f for f in code_files if is_test(f)]
     if require_tests:
-        exempt = DEFAULT_TEST_EXEMPT + [p for p in cfg.get("test_exempt", []) if isinstance(p, str)]
-        prod = [f for f in code_files if needs_test(f, exempt)]
-        tests = [f for f in code_files if is_test(f)]
         # Rust keeps unit tests inline: a changed #[cfg(test)] block counts.
         if prod and not tests:
             inline = [f for f in prod if f.endswith(".rs") and RUST_INLINE_TEST_RE.search(_read(root / f))]
@@ -466,10 +466,93 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
             "No test command found. Set \"test_command\" in .agents/agy.json to enable the test gate."
         )
 
+    # 4b. Lint on the changed lines only, with the linters the project already has.
+    if "lint" not in cmds and cfg.get("lint_changed_lines", True):
+        try:
+            from discipline import lint_changed_lines
+            findings, linters = lint_changed_lines(root, base, code_files, timeout)
+            result.ran.extend(f"lint:{n}" for n in linters)
+            if findings:
+                result.fail("Lint findings on the lines you changed", "\n".join(findings[:40]))
+        except Exception as e:
+            result.fail("Lint step crashed", f"{e}\n{traceback.format_exc(limit=3)}")
+
     # 5. Visual QA: open the changed UI in a browser (desktop + mobile).
     if visual:
         run_visual_step(root, code_files, cfg, result, base)
+
+    # 6. Second-look reviews: only when everything else passes (skipped with the browser
+    # step by the fast pre-commit mode).
+    if result.ok and visual:
+        run_reviews(root, code_files, prod, tests, cmds.get("test", ""), cfg, result, base, timeout)
     return result
+
+
+def run_reviews(root: Path, code_files: List[str], prod: List[str], tests: List[str], test_cmd: str,
+                cfg: Dict[str, Any], result: CheckResult, base: str, timeout: int) -> None:
+    """Findings that may be intended (a renamed API, a refactor test): agy must look once."""
+    if cfg.get("api_guard", True):
+        _review_api(root, code_files, result, base)
+    if cfg.get("diff_guard", True):
+        _review_diff(root, code_files, result, base)
+    if cfg.get("prove_tests", True) and prod and tests and test_cmd:
+        _review_tests(root, tests, test_cmd, result, base, timeout)
+
+
+def _review_api(root: Path, code_files: List[str], result: CheckResult, base: str) -> None:
+    try:
+        from discipline import api_changes
+        changes = api_changes(root, base, code_files)
+    except Exception as e:
+        result.notes.append(f"API guard skipped: {e}")
+        return
+    result.ran.append("api-guard")
+    if changes:
+        result.reviews.append((
+            "Public API changed",
+            "\n".join(f"- {c}" for c in changes[:20]) +
+            "\nFind every caller first: python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/"
+            "symbol_impact.py <symbol>. Update the callers, or keep the old signature "
+            "(optional new parameters, a deprecated alias). Say which callers you checked.",
+        ))
+
+
+def _review_diff(root: Path, code_files: List[str], result: CheckResult, base: str) -> None:
+    try:
+        from discipline import diff_hygiene
+        hygiene = diff_hygiene(root, base, code_files)
+    except Exception as e:
+        result.notes.append(f"Diff guard skipped: {e}")
+        return
+    result.ran.append("diff-guard")
+    if hygiene:
+        result.reviews.append((
+            "Deleted comments, docstrings or large blocks",
+            "\n".join(f"- {h}" for h in hygiene[:20]) +
+            "\nRestore what you removed by accident. For each intended removal, say why.",
+        ))
+
+
+def _review_tests(root: Path, tests: List[str], test_cmd: str, result: CheckResult, base: str, timeout: int) -> None:
+    try:
+        from discipline import prove_tests
+        status, detail = prove_tests(root, base, tests, test_cmd, state_dir(root), timeout)
+    except Exception as e:
+        result.notes.append(f"Test proof skipped: {e}")
+        return
+    result.ran.append("prove-tests")
+    if status == "unproved":
+        result.reviews.append((
+            "Your tests pass without your change",
+            detail + "\nChanged tests:\n" + "\n".join(f"- {t}" for t in tests[:15]) +
+            "\nA test for a fix or a feature must fail on the old code. Make the test check the "
+            "behaviour you changed (RED first). Only for a pure refactor is a passing test correct: "
+            "then say so in your answer.",
+        ))
+    elif status == "proved":
+        result.notes.append(detail)
+    else:
+        result.notes.append(f"Test proof skipped: {detail}")
 
 
 def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], result: CheckResult, base: str = "") -> None:
@@ -525,8 +608,8 @@ def format_report(result: CheckResult, files: List[str]) -> str:
 
 def format_review(result: CheckResult) -> str:
     lines = [
-        "[Antigravity Stop Gate] All checks pass, but your change altered the rendered UI. "
-        "Review it before you finish: this is required once for these changes.",
+        "[Antigravity Stop Gate] All checks pass, but parts of your change need a second look. "
+        "Review each point below before you finish: this is required once for these changes.",
         "",
     ]
     for title, detail in result.reviews:
@@ -570,9 +653,105 @@ def handle_pre_tool(payload: Dict[str, Any]) -> Dict[str, Any]:
     name = tool.get("name", "") if isinstance(tool, dict) else ""
     args = tool.get("args", {}) if isinstance(tool, dict) else {}
     allowed, reason = inspect_tool_call(name, args if isinstance(args, dict) else {})
-    if allowed:
-        return {"decision": "allow"}
-    return {"decision": "deny", "reason": f"[Antigravity Pre-Tool Guard] {reason}"}
+    if not allowed:
+        return {"decision": "deny", "reason": f"[Antigravity Pre-Tool Guard] {reason}"}
+    unread = unread_edit_target(payload, name)
+    if unread:
+        return {"decision": "deny", "reason": (
+            f"[Antigravity Pre-Tool Guard] You are editing {unread} but you have not opened it in this "
+            "conversation. Read the file first (view_file), at least the part you change and its callers. "
+            "Then make the edit again.")}
+    return {"decision": "allow"}
+
+
+# ------------------------------------------------------------ read before write
+
+READ_TOOL_NAMES = {"view_file", "view_file_outline", "view_code_item", "grep_search",
+                   "find_by_name", "list_dir", "codebase_search"}
+EDIT_TOOLS = ("replace_file_content", "multi_replace_file_content")
+PATH_TOKEN_RE = re.compile(r"[A-Za-z]:[\\/][^\s\"'<>|*?]+|[^\s\"'<>|*?:,()\[\]{}]+\.[A-Za-z0-9]{1,8}")
+MAX_SEEN_PATHS = 600
+
+
+def _norm(p: Path) -> str:
+    s = str(p)
+    return s.lower() if os.name == "nt" else s
+
+
+def _paths_in(payload: Dict[str, Any], ws: Path) -> List[str]:
+    """Existing files mentioned anywhere in a tool call or its result."""
+    try:
+        text = json.dumps(payload, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return []
+    text = text.replace("\\\\", "\\")  # JSON-escaped Windows separators
+    found: List[str] = []
+    for tok in PATH_TOKEN_RE.findall(text)[:400]:
+        tok = tok.strip(".;")
+        cand = Path(tok).expanduser()
+        if not cand.is_absolute():
+            cand = ws / cand
+        try:
+            if cand.is_file():
+                found.append(_norm(cand.resolve()))
+        except (OSError, ValueError):
+            continue
+    return found
+
+
+def record_seen(payload: Dict[str, Any]) -> None:
+    """PostToolUse: remember which files agy has seen in this conversation."""
+    tool = payload.get("toolCall") or {}
+    name = tool.get("name", "") if isinstance(tool, dict) else ""
+    ws = workspace_of(payload)
+    root = git_root(ws)
+    if root is None:
+        return
+    paths = _paths_in(payload, ws)
+    state = load_state(root)
+    seen = state.get("seen", {})
+    conv = str(payload.get("conversationId") or "default")
+    entry = seen.get(conv) or {"paths": [], "reads": 0}
+    known = set(entry.get("paths", []))
+    for p in paths:
+        if p not in known:
+            entry["paths"].append(p)
+            known.add(p)
+    entry["paths"] = entry["paths"][-MAX_SEEN_PATHS:]
+    if name in READ_TOOL_NAMES:
+        entry["reads"] = int(entry.get("reads", 0)) + 1  # proof that read tools reach this hook
+    entry["t"] = time.time()
+    seen[conv] = entry
+    state["seen"] = _trim_dict(seen, 30)
+    save_state(root, state)
+
+
+def unread_edit_target(payload: Dict[str, Any], name: str) -> str:
+    """The file an edit targets when agy never saw it in this conversation, else ''.
+    Fails open: no verdict until a read tool has reached PostToolUse at least once."""
+    if not env_flag("AGY_READ_BEFORE_WRITE", True):
+        return ""
+    if name not in EDIT_TOOLS and name != "write_to_file":
+        return ""
+    path = _target_file(payload)
+    if path is None or not path.is_file():
+        return ""  # a new file needs no reading
+    if name == "write_to_file" and path.stat().st_size == 0:
+        return ""
+    root = git_root(path.parent)
+    if root is None:
+        return ""
+    if load_project_config(root).get("read_before_write", True) is False:
+        return ""
+    entry = (load_state(root).get("seen") or {}).get(str(payload.get("conversationId") or "default")) or {}
+    if int(entry.get("reads", 0)) < 1:
+        return ""
+    if _norm(path) in set(entry.get("paths", [])):
+        return ""
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _target_file(payload: Dict[str, Any]) -> Optional[Path]:
@@ -590,6 +769,10 @@ def _target_file(payload: Dict[str, Any]) -> Optional[Path]:
 
 
 def handle_post_tool(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        record_seen(payload)
+    except Exception as err:  # never break the tool flow for bookkeeping
+        logger.debug("record_seen failed: %s", err)
     if not env_flag("AGY_AUTO_DEBUG", True):
         return {}
     tool = payload.get("toolCall") or {}

@@ -48,6 +48,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 logger = logging.getLogger("visual_gate")
 
+from base_worktree import Worktree, git as _git  # noqa: E402  (needs SCRIPTS_DIR on sys.path)
+
 FRONTEND_EXTENSIONS = {
     ".tsx", ".jsx", ".vue", ".svelte", ".astro",
     ".html", ".htm", ".css", ".scss", ".sass", ".less",
@@ -437,7 +439,6 @@ def _resolve_plan(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
 
 # ------------------------------------------------------------------- baseline
 
-ENV_FILES = (".env", ".env.local", ".env.development", ".env.development.local")
 _NORMALIZE_RE = re.compile(r"https?://[^/\s]+|file://\S+?(?=[\s:]|$)|:\d+:\d+|\b\d+(\.\d+)?(px|ms|s)?\b")
 
 
@@ -460,84 +461,6 @@ def new_defects(current: List[str], baseline: List[str]) -> List[str]:
         else:
             out.append(d)
     return out
-
-
-def _git(args: List[str], cwd: Path, timeout: int = 120) -> Tuple[int, str]:
-    try:
-        res = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True,
-                             timeout=timeout, check=False, encoding="utf-8", errors="replace")
-        return res.returncode, (res.stdout or "") + (res.stderr or "")
-    except (OSError, subprocess.SubprocessError) as e:
-        return 1, str(e)
-
-
-def _link_dir(target: Path, link: Path) -> bool:
-    """Directory link that works without admin rights: symlink on POSIX, junction on Windows."""
-    try:
-        if os.name == "nt":
-            res = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
-                                 capture_output=True, check=False, timeout=30)
-            return res.returncode == 0
-        os.symlink(str(target), str(link), target_is_directory=True)
-        return True
-    except (OSError, subprocess.SubprocessError) as err:
-        logger.debug("Cannot link %s: %s", link, err)
-        return False
-
-
-def _unlink_dir(link: Path) -> None:
-    """Remove a directory link without touching what it points to."""
-    try:
-        if os.name == "nt":
-            os.rmdir(str(link))  # removes a junction, never its target
-        elif link.is_symlink():
-            link.unlink()
-    except OSError as err:
-        logger.debug("Cannot remove link %s: %s", link, err)
-
-
-class Worktree:
-    """Detached checkout of the base commit, with the project's node_modules and .env files."""
-
-    def __init__(self, root: Path, base: str, path: Path) -> None:
-        self.root = root
-        self.base = base
-        self.path = path
-        self.links: List[Path] = []
-
-    def __enter__(self) -> "Worktree":
-        self.remove()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        code, out = _git(["worktree", "add", "--detach", "--force", str(self.path), self.base], self.root)
-        if code != 0:
-            raise RuntimeError(f"git worktree add failed: {out.strip()[-500:]}")
-        nm = self.root / "node_modules"
-        if nm.is_dir() and not (self.path / "node_modules").exists():
-            if _link_dir(nm, self.path / "node_modules"):
-                self.links.append(self.path / "node_modules")
-        for name in ENV_FILES:
-            src = self.root / name
-            dst = self.path / name
-            if src.is_file() and not dst.exists():
-                try:
-                    dst.write_bytes(src.read_bytes())
-                except OSError as err:
-                    logger.debug("Cannot copy %s: %s", name, err)
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.remove()
-
-    def remove(self) -> None:
-        for link in self.links:
-            _unlink_dir(link)
-        self.links = []
-        if self.path.exists():
-            # A link left by an interrupted run: remove the link itself first, so that
-            # "git worktree remove" can never delete the project's real node_modules.
-            _unlink_dir(self.path / "node_modules")
-            _git(["worktree", "remove", "--force", str(self.path)], self.root)
-        _git(["worktree", "prune"], self.root)
 
 
 def _baseline_cache(out_base: Path, sha: str) -> Path:
