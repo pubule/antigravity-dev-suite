@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.18.0] — 2026-11-03
+
+### 👁️ Visual QA is enforced on UI changes
+The suite described a Playwright check for frontend changes, but nothing ran it: the Stop gate had no visual step, `visual_qa.py` always exited 0, and missing Playwright or dev server meant a silent skip.
+
+- **Stop gate runs visual QA** when a change touches `.tsx .jsx .vue .svelte .astro .html .css .scss .sass .less`. New module `scripts/visual_gate.py`. It blocks on JS exceptions, console errors, failed same-origin requests, mobile overflow and WCAG violations, and lists the screenshots for agy to open.
+- **Dev server handling** from `.agents/agy.json` (`visual_qa.url`, `dev_command`, `routes`, `startup_timeout`, `timeout`). The gate starts the server when needed and stops its whole process tree (POSIX process group, `taskkill /T` on Windows). Static HTML is opened from disk; server templates are not.
+- **No silent skips.** No page to open, or Playwright/Chromium missing, blocks with the exact fix. Turn the step off with `"visual_qa": false` or `AGY_VISUAL_QA=0`. The pre-commit hook skips the browser step (`check --no-visual`).
+- **`visual_qa.py` exit codes:** 1 on defects (status `FAIL`), 3 for skipped with `--fail-on-skip`. Same-origin HTTP 4xx/5xx go to the new `http_errors` list; third-party ones stay warnings.
+- **Chromium installs by default** (bounded to 10 minutes). Skip with `--no-browsers` / `-NoBrowsers` / `AGY_INSTALL_BROWSERS=0`. `doctor` reports whether Chromium is ready.
+- **Playwright MCP fixed.** `mcp_config.json` named `@modelcontextprotocol/server-playwright`, which does not exist on npm; it now uses `@playwright/mcp`. The skill uses the real tool names (`browser_resize`, `browser_take_screenshot`, `browser_console_messages`, `browser_evaluate`).
+
+### 🐛 JSX/TSX false syntax errors
+- Every closing tag (`</div>`) was read as an unclosed regex, and every apostrophe in JSX text (`<p>L'utente</p>`) as an unclosed string. Valid React code was blocked by the gate and reported to agy as broken after each edit. `validator_core.blank_jsx_text()` now ignores quotes in JSX text, and `</` never starts a regex.
+
+---
+
 ## [1.17.0] — 2026-11-02
 
 ### 🛡️ Verification that actually runs

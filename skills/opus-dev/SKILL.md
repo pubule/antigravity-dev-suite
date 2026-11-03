@@ -72,7 +72,7 @@ flowchart TD
   - Public API contract drift gate: Execute `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/api_contract_guard.py --target .` to ensure zero breaking changes in exported signatures.
   - If Tier-1 fails, apply minimal surgical fixes immediately without spending roundtrips on LLM subagents.
 - **Tier-2 Adversarial Cognitive Audit**: When necessary, invoke `claude-critic` (always configured with `model: inherit`, never `model: pro` to prevent latency bottlenecks) across the 7 Opus pillars.
-- **Frontend / UI & Accessibility**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and automated WCAG 2.1 AA accessibility checks reviewed via `visual-qa-critic`.
+- **Frontend / UI & Accessibility**: If HTML, CSS, React, Vue, or Svelte was modified, run `/visual-qa` with dual-viewport (1280x800 Desktop + 375x667 Mobile) and automated WCAG 2.1 AA accessibility checks reviewed via `visual-qa-critic`. The Stop gate enforces this step: start the dev server, open the screenshots it lists and look at them.
 - **Closed-Loop Resolution**:
   - Run the full gate: `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/agy_hook.py check`.
   - If it reports `RESULT: FAIL`, fix each listed problem at its root cause and run it again.

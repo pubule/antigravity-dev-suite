@@ -13,7 +13,8 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
    - static critic (secrets, empty `except`, mutable defaults, quadratic traps, unsafe patterns);
    - **test-first**: a changed production file needs a new or changed test file;
    - typecheck and lint, when the project configures them;
-   - the project test suite.
+   - the project test suite;
+   - **visual QA** when you change UI files (`.tsx .jsx .vue .svelte .astro .html .css .scss`): the gate opens the page in Chromium at 1280x800 and 375x667 and blocks on JS errors, console errors, failed requests, mobile overflow and WCAG violations.
 2. **If the gate blocks you**, the reason lists each failure. Fix the cause. Then finish again.
 3. **Never weaken the checks.** Do not delete, skip or loosen tests. Do not add `# nosec` to silence a finding you did not fix. Do not edit `.agents/agy.json`. Do not use `--no-verify`. The guard blocks these actions.
 4. **Run the gate yourself** before you finish. Use the command from the gate message, or:
@@ -84,7 +85,12 @@ Language details: [rules/languages/typescript.md](rules/languages/typescript.md)
 
 ## 8. Frontend
 
-When you change UI, run `/visual-qa`: desktop 1280x800 and mobile 375x667, zero console errors, no horizontal overflow, touch targets of 44x44px or more.
+The Stop gate runs visual QA on every UI change. To pass it:
+1. Start the dev server before you finish, unless `.agents/agy.json` lets the gate start it.
+2. When the gate lists screenshots, open each one and look at it. Say what you see before you fix the code.
+3. Fix the cause of each defect: zero console errors, no failed requests, no horizontal overflow at 375px.
+4. Check what the page shows, not only the errors: text cut off, overlapping elements, wrong layout. The gate cannot judge these. You can.
+5. Keep touch targets at 44x44px or more.
 
 ---
 

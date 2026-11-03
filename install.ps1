@@ -2,7 +2,7 @@
 # Antigravity Dev Suite — 1-Click Installer for Windows (PowerShell)
 # Claude Opus 5.5 Coding Standard & Cross-Platform Engine
 # ==============================================================================
-param([switch]$WithBrowsers)
+param([switch]$WithBrowsers, [switch]$NoBrowsers)
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -60,8 +60,16 @@ try {
     } else {
         Write-Host "  ✔ Playwright python module is already installed." -ForegroundColor Green
     }
-    if ($WithBrowsers -or $env:AGY_INSTALL_BROWSERS -eq "1") {
-        & $PythonCmd @PythonArgs -m playwright install chromium *> $null
+    # Chromium for the visual QA step of the Stop gate (about 150 MB, once).
+    # Skip with -NoBrowsers or AGY_INSTALL_BROWSERS=0. -WithBrowsers is kept for compatibility.
+    if (-not $NoBrowsers -and $env:AGY_INSTALL_BROWSERS -ne "0") {
+        Write-Host "  ⏳ Installing Playwright Chromium (bounded to 10 minutes)..." -ForegroundColor Gray
+        & $PythonCmd @PythonArgs -c "import subprocess, sys; sys.exit(subprocess.run([sys.executable, '-m', 'playwright', 'install', 'chromium'], timeout=600).returncode)" *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  ✔ Chromium ready for visual QA." -ForegroundColor Green
+        } else {
+            Write-Host "  ℹ Chromium could not be installed now. Run later: py -3 -m playwright install chromium" -ForegroundColor Gray
+        }
     }
 } catch {
     Write-Host "  ℹ Playwright could not be installed. Visual QA will run in fallback mode." -ForegroundColor Gray
