@@ -880,12 +880,11 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
     if count >= max_blocks:
         # The agent stopped repeatedly without changing anything: stop looping,
         # but leave a trace the statusline and the next session can show.
-        state["gave_up"] = {"fingerprint": fp, "t": time.time(), "files": files[:20]}
-        save_state(root, state)
-        sys.stderr.write("[Antigravity Stop Gate] Block limit reached without progress; allowing stop.\n")
-        return {"decision": "allow"}
+        return _give_up(root, state, fp, files, "block limit reached without progress")
 
     if cached and not cached.get("ok") and cached.get("report"):
+        if ((state.get("loops") or {}).get(conv) or {}).get("escalated"):
+            return _give_up(root, state, fp, files, "stuck on the same failure; agy was told to ask the user")
         report = cached["report"]
     else:
         result = run_checks(root, files, cfg, base=base)
@@ -895,6 +894,7 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
             cache[fp] = {"ok": True, "t": time.time()}
             state["checks"] = _trim_dict(cache, 20)
             state.pop("gave_up", None)
+            reset_loop(state, conv)
             save_state(root, state)
             return {"decision": "continue", "reason": format_review(result)}
         if result.ok:
@@ -904,9 +904,13 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
             cache[fingerprint(root, files_after, json.dumps(cfg, sort_keys=True))] = {"ok": True, "t": time.time()}
             state["checks"] = _trim_dict(cache, 20)
             state.pop("gave_up", None)
+            reset_loop(state, conv)
             save_state(root, state)
             return {"decision": "allow"}
         report = format_report(result, files)
+        report, stuck = loop_breaker(state, conv, result, report)
+        if stuck:
+            return _give_up(root, state, fp, files, "stuck on the same failure; agy was told to ask the user")
         cache[fp] = {"ok": False, "report": report, "t": time.time()}
         state["checks"] = _trim_dict(cache, 20)
 
@@ -914,6 +918,76 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
     state["blocks"] = _trim_dict(blocks, 20)
     save_state(root, state)
     return {"decision": "continue", "reason": report}
+
+
+def _give_up(root: Path, state: Dict[str, Any], fp: str, files: List[str], why: str) -> Dict[str, Any]:
+    state["gave_up"] = {"fingerprint": fp, "t": time.time(), "files": files[:20], "why": why}
+    save_state(root, state)
+    sys.stderr.write(f"[Antigravity Stop Gate] Allowing stop: {why}.\n")
+    return {"decision": "allow"}
+
+
+# ---------------------------------------------------------------- loop breaker
+# A fast model that fails the same way twice tends to keep guessing. After 2
+# identical failures the gate asks for a debug protocol; at LOOP_ESCALATE it asks
+# agy to stop and explain the problem to the user, and the stop after that is allowed.
+
+LOOP_DEBUG_AT = 2
+LOOP_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+DEBUG_PROTOCOL = (
+    "## Same failure as last time (attempt {n})\n"
+    "Your last fix did not change the result. Stop guessing and debug:\n"
+    "1. Reproduce: run the failing command alone and read the whole output, not just the last line.\n"
+    "2. Read the code path the error points to from the entry point, not just the failing line.\n"
+    "3. Write down 2 or 3 hypotheses for the root cause. Check each one with a print, a log or a "
+    "small test BEFORE you edit.\n"
+    "4. Change one thing, re-run, compare. Revert changes that did not help.\n"
+    "Do not weaken the test or the check to get past it."
+)
+
+ESCALATION = (
+    "[Antigravity Stop Gate] You are stuck: the same failure came back {n} times.\n"
+    "Stop changing code. In your answer to the user, write:\n"
+    "- the exact failure (command and error),\n"
+    "- what you tried each time and what happened,\n"
+    "- your best hypothesis for the cause,\n"
+    "- what you need from the user (a decision, information, access).\n"
+    "Then finish: the gate will let you stop this time.\n\n"
+)
+
+
+def failure_signature(result: CheckResult) -> str:
+    """Same checks failing with the same messages, ignoring numbers (lines, timings)."""
+    text = "\n".join(f"{t}\n{d[:600]}" for t, d in result.failures)
+    return hashlib.sha256(LOOP_NUMBER_RE.sub("N", text).encode("utf-8")).hexdigest()[:16]
+
+
+def loop_breaker(state: Dict[str, Any], conv: str, result: CheckResult, report: str) -> Tuple[str, bool]:
+    """Returns (report, stuck). `stuck` means agy was already told to ask for help."""
+    loops = state.get("loops", {})
+    sig = failure_signature(result)
+    prev = loops.get(conv) or {}
+    if prev.get("sig") == sig:
+        if prev.get("escalated"):
+            return report, True
+        n = int(prev.get("n", 1)) + 1
+    else:
+        n = 1
+    escalate_at = max(LOOP_DEBUG_AT + 1, int(os.environ.get("AGY_LOOP_ESCALATE", "4")))
+    entry = {"sig": sig, "n": n, "t": time.time()}
+    if n >= escalate_at:
+        entry["escalated"] = True
+        report = ESCALATION.format(n=n) + report
+    elif n >= LOOP_DEBUG_AT:
+        report = report.rstrip() + "\n\n" + DEBUG_PROTOCOL.format(n=n)
+    loops[conv] = entry
+    state["loops"] = _trim_dict(loops, 30)
+    return report, False
+
+
+def reset_loop(state: Dict[str, Any], conv: str) -> None:
+    (state.get("loops") or {}).pop(conv, None)
 
 
 def handle_stop(payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -581,6 +581,37 @@ class TestDiscipline(Base):
         self.assertNotIn("`os`", out["reason"])
 
 
+class TestLoopBreaker(Base):
+    def test_same_failure_gets_debug_protocol_then_escalation_then_allow(self):
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        reasons = []
+        for i in range(1, 5):
+            # A different broken edit each time, with the same error.
+            self.write("app.py", f"X = {i}\ndef f(:\n    pass\n")
+            out = run_json(["stop"], payload, env)
+            self.assertEqual(out["decision"], "continue", i)
+            reasons.append(out["reason"])
+        self.assertNotIn("Same failure as last time", reasons[0])
+        self.assertIn("Same failure as last time (attempt 2)", reasons[1])
+        self.assertIn("hypotheses", reasons[2])
+        self.assertIn("You are stuck", reasons[3])
+        # Stopping again, with or without a new edit, is allowed.
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "allow")
+        self.write("app.py", "X = 9\ndef f(:\n    pass\n")
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "allow")
+
+    def test_a_different_failure_or_a_pass_resets_the_count(self):
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        self.write("app.py", "def f(:\n    pass\n")
+        run_json(["stop"], payload, env)
+        self.write("app.py", "X = 1\ndef f(:\n    pass\n")
+        self.assertIn("attempt 2", run_json(["stop"], payload, env)["reason"])
+        self.write("app.py", "def f():\n    return [\n")
+        self.assertNotIn("Same failure", run_json(["stop"], payload, env)["reason"])
+
+
 class TestReadBeforeWrite(Base):
     def tool(self, hook, name, args, **extra):
         payload = dict(self.base, toolCall={"name": name, "args": args})
