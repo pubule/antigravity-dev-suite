@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -59,7 +60,9 @@ class Base(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.home = self.tmp / "home"
         self.home.mkdir()
-        self.env = {"HOME": str(self.home), "USERPROFILE": str(self.home), "GEMINI_HOME": str(self.home / ".gemini")}
+        self.env = {"HOME": str(self.home), "USERPROFILE": str(self.home), "GEMINI_HOME": str(self.home / ".gemini"),
+                    # Acceptance criteria have their own tests (TestGuidance).
+                    "AGY_CRITERIA": "0"}
         for k in ("AGY_STOP_GATE_DISABLE", "AGY_REQUIRE_TESTS", "AGY_PRE_TOOL_GUARD", "AGY_AUTO_DEBUG", "AGY_VISUAL_QA"):
             os.environ.pop(k, None)
         self.repo = self.tmp / "proj"
@@ -530,6 +533,61 @@ class TestDiscipline(Base):
         self.assertIn("Public API changed", out["reason"])
         self.assertIn("symbol_impact.py", out["reason"])
 
+    def test_no_tests_collected_is_not_a_failure_without_test_files(self):
+        if not self.has_pytest:
+            self.skipTest("pytest not installed")
+        self.calc("def add(a: int, b: int) -> int:\n    return a + b\n")
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertEqual(out["decision"], "allow", out.get("reason"))
+
+    def test_test_file_pytest_cannot_see_fails(self):
+        if not self.has_pytest:
+            self.skipTest("pytest not installed")
+        self.calc("def add(a: int, b: int) -> int:\n    return a + b\n")
+        self.write("tests/ops_checks.py", self.TEST)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("pytest collected no tests", out["reason"])
+        self.assertIn("tests/ops_checks.py", out["reason"])
+
+    def test_changed_lines_without_test_coverage_need_review(self):
+        helptext = subprocess.run(["pytest", "--help"], capture_output=True, text=True).stdout \
+            if shutil.which("pytest") else ""
+        if "--cov" not in helptext:
+            self.skipTest("the pytest on PATH has no pytest-cov")
+        self.calc("def add(a: int, b: int) -> int:\n    return a - b\n")
+        self.commit_all("cov")
+        self.calc(
+            "def add(a: int, b: int) -> int:\n    return a + b\n\n\n"
+            "def clamp(x: int) -> int:\n    if x < 0:\n        return 0\n    return x\n"
+        )
+        self.write("tests/test_ops.py", self.TEST)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Changed lines that no test runs", out["reason"])
+        self.assertIn("src/calc/ops.py: lines 6-8", out["reason"])
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_coverage_helpers(self):
+        from discipline import coverage_command, coverage_plugin_missing, executed_lines
+        self.assertTrue(coverage_plugin_missing("pytest: error: unrecognized arguments: --cov=."))
+        self.assertTrue(coverage_plugin_missing("MISSING DEPENDENCY  Cannot find dependency '@vitest/coverage-v8'"))
+        self.assertFalse(coverage_plugin_missing("1 failed, 3 passed"))
+        out = self.tmp / "cov"
+        self.assertIn("--cov=.", coverage_command(self.repo, "uv run pytest -q", out)[0])
+        self.assertIsNone(coverage_command(self.repo, "cargo test", out))
+        self.write("package.json", json.dumps({"scripts": {"test": "vitest run"}}))
+        cmd, kind, _ = coverage_command(self.repo, "npm test", out)
+        self.assertIn("npm test -- --coverage.enabled=true", cmd)
+        self.assertEqual(kind, "istanbul")
+        report = self.tmp / "coverage-final.json"
+        report.write_text(json.dumps({str(self.repo / "src" / "a.ts"): {
+            "path": str(self.repo / "src" / "a.ts"),
+            "statementMap": {"0": {"start": {"line": 1}}, "1": {"start": {"line": 4}}},
+            "s": {"0": 3, "1": 0}}}), encoding="utf-8")
+        self.assertEqual(executed_lines(self.repo, "istanbul", report), {"src/a.ts": ({1}, {4})})
+
     def test_changed_lines(self):
         from discipline import changed_lines
         self.write("a.py", "x = 1\ny = 2\nz = 3\n")
@@ -561,6 +619,212 @@ class TestDiscipline(Base):
         self.assertIn("Lint findings on the lines you changed", out["reason"])
         self.assertIn("json", out["reason"])
         self.assertNotIn("`os`", out["reason"])
+
+
+class TestLoopBreaker(Base):
+    def test_same_failure_gets_debug_protocol_then_escalation_then_allow(self):
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        reasons = []
+        for i in range(1, 5):
+            # A different broken edit each time, with the same error.
+            self.write("app.py", f"X = {i}\ndef f(:\n    pass\n")
+            out = run_json(["stop"], payload, env)
+            self.assertEqual(out["decision"], "continue", i)
+            reasons.append(out["reason"])
+        self.assertNotIn("Same failure as last time", reasons[0])
+        self.assertIn("Same failure as last time (attempt 2)", reasons[1])
+        self.assertIn("hypotheses", reasons[2])
+        self.assertIn("You are stuck", reasons[3])
+        # Stopping again, with or without a new edit, is allowed.
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "allow")
+        self.write("app.py", "X = 9\ndef f(:\n    pass\n")
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "allow")
+
+    def test_a_different_failure_or_a_pass_resets_the_count(self):
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        self.write("app.py", "def f(:\n    pass\n")
+        run_json(["stop"], payload, env)
+        self.write("app.py", "X = 1\ndef f(:\n    pass\n")
+        self.assertIn("attempt 2", run_json(["stop"], payload, env)["reason"])
+        self.write("app.py", "def f():\n    return [\n")
+        self.assertNotIn("Same failure", run_json(["stop"], payload, env)["reason"])
+
+
+class TestGuidance(Base):
+    def pre_invocation(self, **extra):
+        return run_json(["pre-invocation"], dict(self.base, **extra), self.env)
+
+    def messages(self, out):
+        return [s["ephemeralMessage"] for s in out.get("injectSteps", [])]
+
+    def test_guided_start_once_per_conversation(self):
+        self.write("src/billing/invoice.py", "def total_amount(lines):\n    return sum(lines)\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "code")
+        self.env["AGY_CRITERIA"] = "1"
+        msgs = self.messages(self.pre_invocation())
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("Guided Start", msgs[0])
+        self.assertIn(".agy/criteria.md", msgs[0])
+        self.assertIn("invoice.py", msgs[0])  # the repository map
+        self.assertEqual(self.pre_invocation(), {})
+        self.assertIn("Guided Start", self.messages(self.pre_invocation(conversationId="other"))[0])
+        exclude = (self.repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        self.assertIn(".agy/", exclude)
+        self.write(".agy/criteria.md", "- [ ] x\n")
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.repo), capture_output=True, text=True)
+        self.assertNotIn(".agy", status.stdout)
+
+    def test_language_rules_injected_once_when_files_change(self):
+        self.pre_invocation()
+        self.assertEqual(self.pre_invocation(), {})
+        self.write("app.py", "X = 1\n")
+        msgs = self.messages(self.pre_invocation())
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("[Antigravity Rules: languages/python]", msgs[0])
+        self.assertEqual(self.pre_invocation(), {})
+        self.write("web/app.ts", "export const x = 1;\n")
+        self.write("db/migrations/001_init.sql", "CREATE TABLE t (id int);\n")
+        names = " ".join(self.messages(self.pre_invocation()))
+        self.assertIn("languages/typescript", names)
+        self.assertIn("database/migrations", names)
+        self.assertNotIn("languages/python", names)
+
+    def test_rule_glob_matching(self):
+        from guidance import _matches
+        self.assertTrue(_matches("a.py", "**/*.py"))
+        self.assertTrue(_matches("src/a/b.py", "**/*.py"))
+        self.assertTrue(_matches("app/migrations/0001.py", "**/migrations/**"))
+        self.assertFalse(_matches("app/migration.py", "**/migrations/**"))
+
+    def test_acceptance_criteria_at_stop(self):
+        env = dict(self.env, AGY_CRITERIA="1", AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        run_json(["session-start"], self.base, env)
+        self.write("settings.json", '{"retries": 3}\n')
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("No acceptance criteria", out["reason"])
+        crit = self.write(".agy/criteria.md", "- [x] retries is 3 — evidence: settings.json\n- [ ] errors are logged\n")
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Acceptance criteria not met", out["reason"])
+        self.assertIn("errors are logged", out["reason"])
+        self.assertNotIn("retries is 3", out["reason"])
+        crit.write_text("- [x] retries is 3 — evidence: settings.json\n- [x] errors are logged\n", encoding="utf-8")
+        out = run_json(["stop"], payload, env)
+        self.assertIn("ticked without evidence", out["reason"])
+        crit.write_text("- [x] retries is 3 — evidence: settings.json\n- [x] errors are logged -> test_log\n", encoding="utf-8")
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "allow")
+
+    def test_criteria_from_an_earlier_conversation_are_stale(self):
+        env = dict(self.env, AGY_CRITERIA="1", AGY_REQUIRE_TESTS="0")
+        crit = self.write(".agy/criteria.md", "- [x] old task — evidence: done\n")
+        old = time.time() - 3600
+        os.utime(str(crit), (old, old))
+        run_json(["session-start"], self.base, env)
+        self.write("settings.json", '{"retries": 3}\n')
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertIn("from an earlier task", out["reason"])
+
+
+class TestSecondOpinion(Base):
+    """A fake reviewer API on localhost: the hook must send the diff and turn findings into a review."""
+
+    def serve(self, reply):
+        import http.server
+        import threading
+        seen = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                seen["path"] = self.path
+                seen["headers"] = {k.lower(): v for k, v in self.headers.items()}
+                seen["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                data = json.dumps(reply).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}", seen
+
+    def setup_project(self, provider, url):
+        self.write(".agents/agy.json", json.dumps({"second_opinion": {"provider": provider, "url": url}}))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "cfg")
+        self.write("settings.json", '{"retries": 3}\n')
+        return dict(self.env, AGY_REQUIRE_TESTS="0", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+
+    def test_anthropic_findings_become_a_review(self):
+        finding = {"summary": "One bug.", "findings": [
+            {"severity": "major", "file": "settings.json", "line": 1, "issue": "retries must be 5", "fix": "set 5"},
+            {"severity": "minor", "file": "settings.json", "line": 1, "issue": "nit", "fix": "x"}]}
+        url, seen = self.serve({"stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(finding)}]})
+        env = dict(self.setup_project("anthropic", url), ANTHROPIC_API_KEY="test-key")
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Second opinion: 1 problem(s)", out["reason"])
+        self.assertIn("retries must be 5", out["reason"])
+        self.assertNotIn("nit", out["reason"])
+        self.assertEqual(seen["headers"].get("x-api-key"), "test-key")
+        self.assertEqual(seen["body"]["model"], "claude-opus-5-5")
+        self.assertEqual(seen["body"]["output_config"]["format"]["type"], "json_schema")
+        self.assertIn('+{"retries": 3}', seen["body"]["messages"][0]["content"])
+        self.assertEqual(run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)["decision"], "allow")
+
+    def test_gemini_clean_review_allows(self):
+        reply = {"candidates": [{"content": {"parts": [{"text": '{"summary": "Fine.", "findings": []}'}]}}]}
+        url, seen = self.serve(reply)
+        env = dict(self.setup_project("gemini", url + "/{model}"), GEMINI_API_KEY="g-key")
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertEqual(out["decision"], "allow")
+        self.assertEqual(seen["headers"].get("x-goog-api-key"), "g-key")
+        self.assertEqual(seen["path"], "/gemini-2.5-pro")
+
+    def test_no_key_or_refusal_never_blocks(self):
+        url, _ = self.serve({"stop_reason": "refusal", "content": []})
+        env = self.setup_project("anthropic", url)
+        env.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        self.assertEqual(run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)["decision"], "allow")
+        self.write("settings.json", '{"retries": 4}\n')
+        env["ANTHROPIC_API_KEY"] = "k"
+        self.assertEqual(run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)["decision"], "allow")
+
+
+class TestGateStats(Base):
+    def test_verdicts_are_logged_and_summarised(self):
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        self.write("app.py", "def f(:\n    pass\n")
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "continue")
+        self.write("app.py", "def f():\n    pass\n")
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "allow", out.get("reason"))
+        res = run(["stats", str(self.repo)], env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("2 verdict(s) in 1 conversation(s)", res.stdout)
+        self.assertIn("pass 1", res.stdout)
+        self.assertIn("block 1", res.stdout)
+        self.assertIn("Syntax errors", res.stdout)
+        self.assertIn("attempts to pass: 2.0", res.stdout)
+        data = json.loads(run(["stats", str(self.repo), "--json", "--days", "1"], env=env).stdout)
+        self.assertEqual(data["verdicts"], {"block": 1, "pass": 1})
+        self.assertEqual(data["first_try_pass_rate"], 0.0)
+
+    def test_no_log_yet(self):
+        res = run(["stats", str(self.repo)], env=self.env)
+        self.assertIn("No stop gate verdicts recorded yet", res.stdout)
 
 
 class TestReadBeforeWrite(Base):

@@ -6,11 +6,12 @@ Usage (the installer writes these commands into ~/.gemini/config/hooks.json):
     python agy_hook.py session-start   # SessionStart: remember the base commit
     python agy_hook.py pre-tool        # PreToolUse: safety guard and bypass blocker
     python agy_hook.py post-tool       # PostToolUse: syntax probe of the written file
-    python agy_hook.py pre-invocation  # PreInvocation: feed syntax errors back to the model
+    python agy_hook.py pre-invocation  # PreInvocation: guided start, language rules, syntax errors
     python agy_hook.py stop            # Stop: run the verification gate
     python agy_hook.py check [DIR]     # Run the same gate by hand (exit 1 on failure)
     python agy_hook.py check --no-visual [DIR]  # Same, without the browser step and reviews
     python agy_hook.py doctor          # Self-test of the installation
+    python agy_hook.py stats [DIR] [--days N] [--json]  # Stop gate statistics
 
 Design rules:
 - The Stop gate runs the checks itself. It never trusts a record written by the agent.
@@ -326,11 +327,12 @@ def _shorten(text: str, limit: int = MAX_SECTION_CHARS) -> str:
     return f"{head}\n[... {len(text) - limit} characters cut ...]\n{tail}"
 
 
-def run_shell(cmd: str, cwd: Path, timeout: int) -> Tuple[int, str]:
+def run_shell(cmd: str, cwd: Path, timeout: int, env: Optional[Dict[str, str]] = None) -> Tuple[int, str]:
     try:
         res = subprocess.run(
             cmd, shell=True, cwd=str(cwd), capture_output=True, text=True,  # nosec: user-configured command
             timeout=timeout, check=False, encoding="utf-8", errors="replace",
+            env=dict(os.environ, **env) if env else None,
         )
         out = (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
         return res.returncode, out
@@ -383,6 +385,7 @@ class CheckResult:
         self.reviews: List[Tuple[str, str]] = []  # agy must look once; they do not fail the gate
         self.notes: List[str] = []
         self.ran: List[str] = []
+        self.coverage: Optional[Tuple[str, Path]] = None  # (report kind, report path)
 
     @property
     def ok(self) -> bool:
@@ -457,9 +460,15 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
         cmd = cmds.get(key)
         if not cmd:
             continue
-        code, out = run_shell(cmd, root, timeout)
+        if key == "test" and visual and prod and require_tests and cfg.get("coverage", True) \
+                and env_flag("AGY_COVERAGE", True):
+            code, out = run_tests_with_coverage(root, cmd, timeout, result)
+        else:
+            code, out = run_shell(cmd, root, timeout)
         result.ran.append(key)
-        if code != 0:
+        if key == "test" and code == 5 and PYTEST_RE.search(cmd):
+            _no_tests_collected(cmd, tests, result)
+        elif code != 0:
             result.fail(f"{title} (`{cmd}`, exit {code})", _condense(out))
     if "test" not in cmds:
         result.notes.append(
@@ -488,6 +497,53 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
     return result
 
 
+def run_tests_with_coverage(root: Path, cmd: str, timeout: int, result: CheckResult) -> Tuple[int, str]:
+    """Run the tests instrumented for coverage when the runner supports it; otherwise,
+    or when the coverage plugin is missing, run the plain command."""
+    try:
+        from discipline import coverage_command, coverage_plugin_missing
+        spec = coverage_command(root, cmd, state_dir(root) / "coverage")
+    except Exception as err:
+        logger.debug("Coverage setup failed: %s", err)
+        spec = None
+    if spec is None:
+        return run_shell(cmd, root, timeout)
+    cov_cmd, kind, report = spec
+    try:
+        report.unlink()
+    except OSError:
+        pass
+    # Keep coverage's data file out of the work tree, or it would count as a change.
+    code, out = run_shell(cov_cmd, root, timeout, env={"COVERAGE_FILE": str(report.parent / ".coverage")})
+    if code != 0 and coverage_plugin_missing(out):
+        result.notes.append(
+            "Coverage plugin not installed: changed-line coverage skipped "
+            "(pytest-cov for pytest, @vitest/coverage-v8 for vitest).")
+        return run_shell(cmd, root, timeout)
+    if report.is_file():
+        result.coverage = (kind, report)
+    return code, out
+
+
+PYTEST_RE = re.compile(r"(^|\s|/)(pytest|py\.test)(\s|$)|-m\s+pytest", re.IGNORECASE)
+
+
+def _no_tests_collected(cmd: str, tests: List[str], result: CheckResult) -> None:
+    """pytest exit 5 = "no tests collected". Not a failure for a project without tests,
+    but a test file agy wrote that pytest cannot see proves nothing."""
+    py_tests = [t for t in tests if t.endswith(".py")]
+    if py_tests:
+        result.fail(
+            f"pytest collected no tests (`{cmd}`, exit 5)",
+            "You changed these test files, but pytest found no test in them:\n"
+            + "\n".join(f"- {t}" for t in py_tests[:15])
+            + "\nName the files test_*.py or *_test.py, the functions test_*, and the classes "
+            "Test* (without __init__). Check testpaths/python_files in pytest.ini or pyproject.toml.",
+        )
+    else:
+        result.notes.append(f"`{cmd}` collected no tests (exit 5): nothing to run yet.")
+
+
 def run_reviews(root: Path, code_files: List[str], prod: List[str], tests: List[str], test_cmd: str,
                 cfg: Dict[str, Any], result: CheckResult, base: str, timeout: int) -> None:
     """Findings that may be intended (a renamed API, a refactor test): agy must look once."""
@@ -497,6 +553,26 @@ def run_reviews(root: Path, code_files: List[str], prod: List[str], tests: List[
         _review_diff(root, code_files, result, base)
     if cfg.get("prove_tests", True) and prod and tests and test_cmd:
         _review_tests(root, tests, test_cmd, result, base, timeout)
+    if result.coverage and prod:
+        _review_coverage(root, prod, result, base)
+
+
+def _review_coverage(root: Path, prod: List[str], result: CheckResult, base: str) -> None:
+    try:
+        from discipline import uncovered_changed_lines
+        kind, report = result.coverage  # type: ignore[misc]
+        findings = uncovered_changed_lines(root, base, prod, kind, report)
+    except Exception as e:
+        result.notes.append(f"Coverage review skipped: {e}")
+        return
+    result.ran.append("coverage")
+    if findings:
+        result.reviews.append((
+            "Changed lines that no test runs",
+            "\n".join(f"- {f}" for f in findings[:20]) +
+            "\nAdd tests that execute these lines (error paths and branches too). If a line cannot be "
+            "tested sensibly, say which one and why in your answer.",
+        ))
 
 
 def _review_api(root: Path, code_files: List[str], result: CheckResult, base: str) -> None:
@@ -799,12 +875,17 @@ def handle_pre_invocation(payload: Dict[str, Any]) -> Dict[str, Any]:
     ws = workspace_of(payload)
     root = project_root(ws)
     state = load_state(root)
-    # Fallback when SessionStart did not fire: the first model call records the base.
-    if git_root(root) and ensure_session(root, state, payload):
-        save_state(root, state)
+    msgs: List[str] = []
+    if git_root(root):
+        # Fallback when SessionStart did not fire: the first model call records the base.
+        changed = ensure_session(root, state, payload)
+        guide = guidance_messages(root, state, payload)
+        if changed or guide:
+            save_state(root, state)
+        msgs = guide
     diags = state.get("diagnostics", {})
     if not diags:
-        return {}
+        return {"injectSteps": [{"ephemeralMessage": m} for m in msgs]} if msgs else {}
     from validator_core import validate_code_file
     open_issues: List[str] = []
     for path_str in list(diags):
@@ -817,13 +898,91 @@ def handle_pre_invocation(payload: Dict[str, Any]) -> Dict[str, Any]:
             diags.pop(path_str, None)
     state["diagnostics"] = diags
     save_state(root, state)
-    if not open_issues:
-        return {}
-    msg = (
-        "[Antigravity Auto-Debug] Your last edit left syntax errors. Fix them before anything else:\n"
-        + "\n".join(open_issues)
-    )
-    return {"injectSteps": [{"ephemeralMessage": _shorten(msg, 3000)}]}
+    if open_issues:
+        msgs.insert(0, _shorten(
+            "[Antigravity Auto-Debug] Your last edit left syntax errors. Fix them before anything else:\n"
+            + "\n".join(open_issues), 3000))
+    return {"injectSteps": [{"ephemeralMessage": m} for m in msgs]} if msgs else {}
+
+
+def guidance_messages(root: Path, state: Dict[str, Any], payload: Dict[str, Any]) -> List[str]:
+    """Guided start on the first model call, then each language's rules the first time
+    a file of that language changes. Updates the session in `state`."""
+    conv = str(payload.get("conversationId") or "default")
+    sess = (state.get("sessions") or {}).get(conv)
+    if not isinstance(sess, dict):
+        return []
+    cfg = load_project_config(root)
+    msgs: List[str] = []
+    try:
+        from guidance import rules_for, start_message
+        if not sess.get("guided"):
+            sess["guided"] = True
+            if env_flag("AGY_GUIDED_START", True):
+                cfg_start = dict(cfg, criteria=criteria_enabled(cfg))
+                text = start_message(root, cfg_start)
+                if text:
+                    msgs.append(text)
+        if cfg.get("language_rules", True):
+            injected = list(sess.get("rules") or [])
+            for name, text in rules_for(root, changed_files(root, sess.get("base", "")), injected):
+                msgs.append(text)
+                injected.append(name)
+            if injected:
+                sess["rules"] = injected
+    except Exception as err:  # guidance is a help: never break the model call
+        logger.debug("Guidance failed: %s", err)
+    return msgs
+
+
+def criteria_enabled(cfg: Dict[str, Any]) -> bool:
+    return bool(cfg.get("criteria", True)) and env_flag("AGY_CRITERIA", True)
+
+
+def apply_criteria(root: Path, cfg: Dict[str, Any], result: CheckResult, session_start: float) -> None:
+    if not criteria_enabled(cfg):
+        return
+    try:
+        from guidance import check_criteria
+        failures, reviews = check_criteria(root, {"criteria": True}, session_start)
+    except Exception as e:
+        result.notes.append(f"Criteria check skipped: {e}")
+        return
+    result.ran.append("criteria")
+    for title, detail in failures:
+        result.fail(title, detail)
+    result.reviews.extend(reviews)
+
+
+def apply_second_opinion(root: Path, cfg: Dict[str, Any], files: List[str], base: str, result: CheckResult) -> None:
+    """A stronger model reviews the diff once everything else passes (opt-in, needs an API key)."""
+    if not env_flag("AGY_SECOND_OPINION", True):
+        return
+    try:
+        from second_opinion import format_findings, review, settings
+        conf = settings(cfg)
+        if conf is None:
+            return
+        from guidance import criteria_fingerprint
+        status, findings, note = review(root, base, files, criteria_fingerprint(root), cfg)
+    except Exception as e:
+        result.notes.append(f"Second opinion skipped: {e}")
+        return
+    if note:
+        result.notes.append(note)
+    if status in ("ok", "issues"):
+        result.ran.append("second-opinion")
+    if findings:
+        result.reviews.append((f"Second opinion: {len(findings)} problem(s)", format_findings(conf["model"], findings)))
+
+
+def gate_extra(root: Path, cfg: Dict[str, Any]) -> str:
+    """Everything besides the changed files that changes the gate's verdict."""
+    extra = json.dumps(cfg, sort_keys=True)
+    if criteria_enabled(cfg):
+        from guidance import criteria_fingerprint
+        extra += "\0" + criteria_fingerprint(root)
+    return extra
 
 
 def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -841,17 +1000,24 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     state = load_state(root)
     conv = str(payload.get("conversationId") or "default")
-    base = (state.get("sessions", {}).get(conv) or {}).get("base", "")
+    sess = state.get("sessions", {}).get(conv) or {}
+    base = sess.get("base", "")
     files = changed_files(root, base)
     if not any(is_code(f) for f in files):
         return {"decision": "allow"}
 
     cfg = load_project_config(root)
-    fp = fingerprint(root, files, json.dumps(cfg, sort_keys=True))
+    extra = gate_extra(root, cfg)
+    fp = fingerprint(root, files, extra)
     cache = state.get("checks", {})
     cached = cache.get(fp)
     if cached and cached.get("ok"):
         return {"decision": "allow"}
+
+    t0 = time.time()
+
+    def log(verdict: str, result: Optional[CheckResult] = None, why: str = "") -> None:
+        log_verdict(root, conv, verdict, files, t0, result, why)
 
     blocks = state.get("blocks", {})
     count = int((blocks.get(fp) or {}).get("n", 0))
@@ -859,40 +1025,142 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
     if count >= max_blocks:
         # The agent stopped repeatedly without changing anything: stop looping,
         # but leave a trace the statusline and the next session can show.
-        state["gave_up"] = {"fingerprint": fp, "t": time.time(), "files": files[:20]}
-        save_state(root, state)
-        sys.stderr.write("[Antigravity Stop Gate] Block limit reached without progress; allowing stop.\n")
-        return {"decision": "allow"}
+        log("gave_up", why="block limit")
+        return _give_up(root, state, fp, files, "block limit reached without progress")
 
     if cached and not cached.get("ok") and cached.get("report"):
+        if ((state.get("loops") or {}).get(conv) or {}).get("escalated"):
+            log("gave_up", why="stuck")
+            return _give_up(root, state, fp, files, "stuck on the same failure; agy was told to ask the user")
         report = cached["report"]
+        log("block", why="unchanged")
     else:
         result = run_checks(root, files, cfg, base=base)
+        apply_criteria(root, cfg, result, float(sess.get("t") or 0))
+        if result.ok:
+            apply_second_opinion(root, cfg, files, base, result)
         if result.ok and result.reviews:
             # Checks pass, but the UI changed: give agy one turn with the before/after images.
             # The next stop on the same content is allowed.
             cache[fp] = {"ok": True, "t": time.time()}
             state["checks"] = _trim_dict(cache, 20)
             state.pop("gave_up", None)
+            reset_loop(state, conv)
             save_state(root, state)
+            log("review", result)
             return {"decision": "continue", "reason": format_review(result)}
         if result.ok:
             cache[fp] = {"ok": True, "t": time.time()}
             # Test runs may touch tracked files (snapshots, lock files): remember both states.
             files_after = changed_files(root, base)
-            cache[fingerprint(root, files_after, json.dumps(cfg, sort_keys=True))] = {"ok": True, "t": time.time()}
+            cache[fingerprint(root, files_after, extra)] = {"ok": True, "t": time.time()}
             state["checks"] = _trim_dict(cache, 20)
             state.pop("gave_up", None)
+            reset_loop(state, conv)
             save_state(root, state)
+            log("pass", result)
             return {"decision": "allow"}
         report = format_report(result, files)
+        report, stuck = loop_breaker(state, conv, result, report)
+        if stuck:
+            log("gave_up", result, why="stuck")
+            return _give_up(root, state, fp, files, "stuck on the same failure; agy was told to ask the user")
         cache[fp] = {"ok": False, "report": report, "t": time.time()}
         state["checks"] = _trim_dict(cache, 20)
+        log("block", result)
 
     blocks[fp] = {"n": count + 1, "t": time.time()}
     state["blocks"] = _trim_dict(blocks, 20)
     save_state(root, state)
     return {"decision": "continue", "reason": report}
+
+
+def log_verdict(root: Path, conv: str, verdict: str, files: List[str], t0: float,
+                result: Optional[CheckResult] = None, why: str = "") -> None:
+    """One line per gate verdict in <state-dir>/gate-log.jsonl, for `agy_hook.py stats`."""
+    entry: Dict[str, Any] = {"t": round(time.time(), 1), "conv": conv, "verdict": verdict,
+                             "files": len(files), "seconds": round(time.time() - t0, 1)}
+    if why:
+        entry["why"] = why
+    if result is not None:
+        entry["ran"] = result.ran
+        entry["failures"] = [t for t, _ in result.failures]
+        entry["reviews"] = [t for t, _ in result.reviews]
+    try:
+        from gate_stats import append
+        append(state_dir(root), entry)
+    except Exception as err:
+        logger.debug("Gate log failed: %s", err)
+
+
+def _give_up(root: Path, state: Dict[str, Any], fp: str, files: List[str], why: str) -> Dict[str, Any]:
+    state["gave_up"] = {"fingerprint": fp, "t": time.time(), "files": files[:20], "why": why}
+    save_state(root, state)
+    sys.stderr.write(f"[Antigravity Stop Gate] Allowing stop: {why}.\n")
+    return {"decision": "allow"}
+
+
+# ---------------------------------------------------------------- loop breaker
+# A fast model that fails the same way twice tends to keep guessing. After 2
+# identical failures the gate asks for a debug protocol; at LOOP_ESCALATE it asks
+# agy to stop and explain the problem to the user, and the stop after that is allowed.
+
+LOOP_DEBUG_AT = 2
+LOOP_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+DEBUG_PROTOCOL = (
+    "## Same failure as last time (attempt {n})\n"
+    "Your last fix did not change the result. Stop guessing and debug:\n"
+    "1. Reproduce: run the failing command alone and read the whole output, not just the last line.\n"
+    "2. Read the code path the error points to from the entry point, not just the failing line.\n"
+    "3. Write down 2 or 3 hypotheses for the root cause. Check each one with a print, a log or a "
+    "small test BEFORE you edit.\n"
+    "4. Change one thing, re-run, compare. Revert changes that did not help.\n"
+    "Do not weaken the test or the check to get past it."
+)
+
+ESCALATION = (
+    "[Antigravity Stop Gate] You are stuck: the same failure came back {n} times.\n"
+    "Stop changing code. In your answer to the user, write:\n"
+    "- the exact failure (command and error),\n"
+    "- what you tried each time and what happened,\n"
+    "- your best hypothesis for the cause,\n"
+    "- what you need from the user (a decision, information, access).\n"
+    "Then finish: the gate will let you stop this time.\n\n"
+)
+
+
+def failure_signature(result: CheckResult) -> str:
+    """Same checks failing with the same messages, ignoring numbers (lines, timings)."""
+    text = "\n".join(f"{t}\n{d[:600]}" for t, d in result.failures)
+    return hashlib.sha256(LOOP_NUMBER_RE.sub("N", text).encode("utf-8")).hexdigest()[:16]
+
+
+def loop_breaker(state: Dict[str, Any], conv: str, result: CheckResult, report: str) -> Tuple[str, bool]:
+    """Returns (report, stuck). `stuck` means agy was already told to ask for help."""
+    loops = state.get("loops", {})
+    sig = failure_signature(result)
+    prev = loops.get(conv) or {}
+    if prev.get("sig") == sig:
+        if prev.get("escalated"):
+            return report, True
+        n = int(prev.get("n", 1)) + 1
+    else:
+        n = 1
+    escalate_at = max(LOOP_DEBUG_AT + 1, int(os.environ.get("AGY_LOOP_ESCALATE", "4")))
+    entry = {"sig": sig, "n": n, "t": time.time()}
+    if n >= escalate_at:
+        entry["escalated"] = True
+        report = ESCALATION.format(n=n) + report
+    elif n >= LOOP_DEBUG_AT:
+        report = report.rstrip() + "\n\n" + DEBUG_PROTOCOL.format(n=n)
+    loops[conv] = entry
+    state["loops"] = _trim_dict(loops, 30)
+    return report, False
+
+
+def reset_loop(state: Dict[str, Any], conv: str) -> None:
+    (state.get("loops") or {}).pop(conv, None)
 
 
 def handle_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -937,13 +1205,15 @@ def cli_check(target: str, visual: bool = True) -> int:
     print(f"Changed files ({len(files)}): " + (", ".join(files[:20]) or "none"))
     # Compare the UI against HEAD: the work-tree changes are what is being checked.
     result = run_checks(root, files, cfg, visual=visual, base="HEAD")
+    if any(is_code(f) for f in files):
+        apply_criteria(root, cfg, result, 0.0)
     for note in result.notes:
         print(f"Note: {note}")
     if result.ok and result.reviews:
         print(format_review(result))
     print(f"Checks run: {', '.join(result.ran) or 'none'}")
     if result.ok and visual:
-        fp = fingerprint(root, files, json.dumps(cfg, sort_keys=True))
+        fp = fingerprint(root, files, gate_extra(root, cfg))
         cache = state.get("checks", {})
         cache[fp] = {"ok": True, "t": time.time()}
         state["checks"] = _trim_dict(cache, 20)
@@ -954,6 +1224,27 @@ def cli_check(target: str, visual: bool = True) -> int:
     print(format_report(result, files))
     print("RESULT: FAIL")
     return 1
+
+
+def cli_stats(args: List[str]) -> int:
+    """agy_hook.py stats [DIR] [--days N] [--json]"""
+    days: Optional[int] = None
+    rest: List[str] = []
+    it = iter(args)
+    for a in it:
+        if a == "--days":
+            days = int(next(it, "0") or 0) or None
+        elif a.startswith("--days="):
+            days = int(a.split("=", 1)[1] or 0) or None
+        elif a != "--json":
+            rest.append(a)
+    ws = Path(rest[0] if rest else ".").expanduser().resolve()
+    root = git_root(ws)
+    if root is None:
+        print(f"Not a git repository: {ws}")
+        return 2
+    from gate_stats import cli
+    return cli(state_dir(root), days, "--json" in args)
 
 
 def cli_doctor() -> int:
@@ -1052,6 +1343,8 @@ def main(argv: List[str]) -> int:
         return cli_check(rest[0] if rest else ".", visual="--no-visual" not in argv[1:])
     if cmd == "doctor":
         return cli_doctor()
+    if cmd == "stats":
+        return cli_stats(argv[1:])
     handler = HANDLERS.get(cmd)
     if handler is None:
         print(f"Unknown command: {cmd}", file=sys.stderr)

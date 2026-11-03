@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.21.0] — 2026-11-03
+
+### 🧠 Plan, prove, ask for help
+What a stronger model does without being told, now asked for and checked.
+
+- **Guided start.** The first model call of a conversation gets a compact repository map (`repo_map.py`, about 1,200 tokens, no cache files) and the request to restate the task, read the files involved and write 3 to 5 acceptance criteria in `.agy/criteria.md` before changing code. `.agy/` is added to `.git/info/exclude`. New module `scripts/guidance.py`.
+- **Acceptance criteria at Stop.** An unticked criterion fails the gate. A missing file, a file older than the conversation, or a criterion ticked without evidence gets a one-time review. Ticking a criterion re-runs the gate. Config `"criteria"`, env `AGY_CRITERIA`.
+- **Language rules on demand.** `rules/languages/*.md` and `rules/database/*.md` (project copies in `.agents/rules/` win) are injected once per conversation, when a file matching their `globs` first changes. Config `"language_rules"`.
+- **Loop breaker.** The same failure twice in a row (numbers ignored) adds a debug protocol to the report. At `AGY_LOOP_ESCALATE` (default 4) agy is told to stop and explain to the user what fails, what it tried and what it needs; the next stop is allowed. A pass or a different failure resets the count.
+- **Changed-line coverage** (review). The test run is instrumented for pytest (pytest-cov), Vitest, Jest and `npm test` running either. Changed production lines no test executed are listed. A missing coverage plugin falls back to the plain command with a note; coverage data stays in the state directory. Config `"coverage"`, env `AGY_COVERAGE`.
+- **Second opinion** (opt-in review). When everything else passes, Claude (Anthropic API, default `claude-opus-5-5`, adaptive thinking, JSON schema output) or Gemini Pro reviews the criteria and the diff. Blocker and major findings become a review; errors, refusals and missing keys are notes. Keys come from the environment only. New module `scripts/second_opinion.py` (urllib, no dependencies).
+- **Gate statistics.** Every verdict goes to `<git-dir>/agy/gate-log.jsonl`. New command `agy_hook.py stats [DIR] [--days N] [--json]`. New module `scripts/gate_stats.py`.
+
+### 🐛 Fixes
+- pytest exit 5 ("no tests collected") no longer fails the gate. It fails only when the change has test files pytest cannot see, with a naming hint.
+
+---
+
 ## [1.20.0] — 2026-11-03
 
 ### 🧭 Discipline checks
