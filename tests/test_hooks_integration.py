@@ -872,6 +872,145 @@ class TestReadBeforeWrite(Base):
         self.assertEqual(run_json(["pre-tool"], other, self.env)["decision"], "allow")
 
 
+TODO_PAGE = (
+    "<!doctype html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width\">"
+    "<title>todo</title></head><body><label>Item <input id=\"t\"></label><button id=\"add\">Add</button>"
+    "<ul class=\"items\"></ul><script>document.getElementById('add').onclick = () => {"
+    "const li = document.createElement('li'); li.textContent = document.getElementById('t').value;"
+    "document.querySelector('ul.items').appendChild(li); };</script></body></html>\n"
+)
+
+
+class TestUiFlows(Base):
+    """UI flows written by agy and run by the gate; build step; targeted tests first."""
+
+    def setUp(self):
+        super().setUp()
+        run_json(["session-start"], self.base, self.env)
+        (self.repo / "pytest.ini").unlink()
+        self.write(".agents/agy.json", json.dumps({"require_tests": False}))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "config")
+
+    def flow(self, name, steps, **extra):
+        self.write(f".agy/flows/{name}.json", json.dumps(dict(extra, name=name, steps=steps)))
+
+    def test_flow_validation(self):
+        from ui_flows import load_flow
+        bad = [
+            ({"steps": []}, "non-empty"),
+            ({"steps": [{"click": "#a", "fill": "#b"}]}, "exactly one action"),
+            ({"steps": [{"click": "#a"}]}, "at least one expect_"),
+        ]
+        for data, msg in bad:
+            p = self.write(".agy/flows/x.json", json.dumps(data))
+            flow, err = load_flow(p)
+            self.assertIsNone(flow)
+            self.assertIn(msg, err)
+        p = self.write(".agy/flows/x.json", "{not json")
+        self.assertIn("cannot read", load_flow(p)[1])
+
+    def test_flow_passes_fails_and_is_required(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        self.write("index.html", TODO_PAGE)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("No UI flow tries your change", out["reason"])
+        # A wrong expectation: the flow fails with the step and a screenshot.
+        self.flow("add", [{"fill": "#t", "value": "Milk"}, {"click": "role=button[name='Add']"},
+                          {"expect_count": "ul.items li", "count": 2}], file="index.html")
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("UI flows failed", out["reason"])
+        self.assertIn("step 3", out["reason"])
+        self.assertIn("step3_failed.png", out["reason"])
+        # The right flow passes; the new page is still reviewed once, then the stop is allowed.
+        self.flow("add", [{"fill": "#t", "value": "Milk"}, {"click": "role=button[name='Add']"},
+                          {"expect_text": "Milk", "selector": "ul.items"},
+                          {"expect_count": "ul.items li", "count": 1}], file="index.html")
+        out = self.stop()
+        self.assertNotIn("UI flows failed", out.get("reason", ""))
+        self.assertNotIn("No UI flow", out.get("reason", ""))
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_flow_reports_js_errors(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        self.write("index.html", TODO_PAGE.replace("appendChild(li);", "appendChild(li); undefinedFn();"))
+        self.flow("add", [{"fill": "#t", "value": "Milk"}, {"click": "#add"},
+                          {"expect_text": "Milk"}], file="index.html")
+        out = self.stop()
+        self.assertIn("UI flows failed", out["reason"])
+        self.assertIn("undefinedFn", out["reason"])
+
+    def test_flows_can_be_turned_off(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        self.write(".agents/agy.json", json.dumps({"require_tests": False, "visual_qa": {"flows": False}}))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "flows off")
+        self.write("index.html", TODO_PAGE)
+        self.assertNotIn("No UI flow", self.stop().get("reason", ""))
+
+    def test_build_command_detection(self):
+        from agy_hook import build_command
+        self.assertEqual(build_command(self.repo, {}, ["src/a.ts"], True), "")  # no package.json
+        self.write("package.json", json.dumps({"scripts": {"build": "vite build"}}))
+        self.assertEqual(build_command(self.repo, {}, ["src/a.ts"], True), "")  # no node_modules
+        (self.repo / "node_modules").mkdir()
+        self.assertEqual(build_command(self.repo, {}, ["src/a.ts"], True), "npm run build")
+        self.write("pnpm-lock.yaml", "")
+        self.assertEqual(build_command(self.repo, {}, ["src/a.ts"], True), "pnpm run build")
+        self.assertEqual(build_command(self.repo, {}, ["app.py"], True), "")
+        self.assertEqual(build_command(self.repo, {}, ["src/a.ts"], False), "")  # pre-commit mode
+        self.assertEqual(build_command(self.repo, {"build_command": False}, ["src/a.ts"], True), "")
+        self.assertEqual(build_command(self.repo, {"build_command": "make ui"}, ["app.py"], False), "make ui")
+
+    def test_failing_build_blocks(self):
+        py = f'"{sys.executable}"' if " " in sys.executable else sys.executable
+        self.write(".agents/agy.json", json.dumps({
+            "require_tests": False, "visual_qa": False,
+            "build_command": f"{py} -c \"import sys; print('Could not resolve ./missing'); sys.exit(1)\""}))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "build")
+        self.write("src/app.py", "X = 1\n")
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Build failed", out["reason"])
+        self.assertIn("Could not resolve", out["reason"])
+
+    def test_related_tests(self):
+        from agy_hook import related_tests
+        for rel in ("tests/test_ops.py", "src/ops.test.ts", "pkg/ops_test.go", "tests/test_other.py"):
+            self.write(rel, "x\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "tests")
+        self.assertEqual(sorted(related_tests(self.repo, ["src/ops.py"])),
+                         ["pkg/ops_test.go", "src/ops.test.ts", "tests/test_ops.py"])
+
+    def test_targeted_tests_fail_first(self):
+        try:
+            import pytest  # noqa: F401
+        except ImportError:
+            self.skipTest("pytest not installed")
+        self.write("pytest.ini", "[pytest]\n")
+        self.write("src/calc/__init__.py", "")
+        self.write("src/calc/ops.py", "def add(a: int, b: int) -> int:\n    return a + b\n")
+        self.write("tests/test_slow.py", "def test_slow() -> None:\n    assert True\n")
+        self.write(".agents/agy.json", json.dumps({"visual_qa": False, "test_command": "pytest -q"}))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "calc")
+        run_json(["session-start"], dict(self.base, conversationId="conv-t"), self.env)
+        self.base = dict(self.base, conversationId="conv-t")
+        self.write("src/calc/ops.py", "def add(a: int, b: int) -> int:\n    return a - b\n")
+        self.write("tests/test_ops.py", TestStopGate.GOOD_TEST)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("changed and related tests", out["reason"])
+        self.assertIn("tests/test_ops.py", out["reason"])
+
+
 class TestIntegrity(Base):
     """Shortcuts that make a change look done: elided code, disabled tests, stubs, invented imports."""
 

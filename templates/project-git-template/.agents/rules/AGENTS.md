@@ -14,8 +14,9 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
    - **integrity of the diff**: placeholder comments instead of code, disabled or focused tests, debugger statements, imports of packages that do not exist;
    - **test-first**: a changed production file needs a new or changed test file;
    - typecheck, and lint on the lines you changed;
-   - the project test suite;
-   - **visual QA** when you change UI files (`.tsx .jsx .vue .svelte .astro .html .css .scss`): the gate opens the page in Chromium at 1280x800 and 375x667, compares it with the base commit, and blocks on new JS errors, console errors, failed requests, mobile overflow and WCAG violations. Pages that look different must be reviewed once.
+   - the changed and related tests first, then the project test suite, then the build (`npm run build` and similar) for JS/TS changes;
+   - **visual QA** when you change UI files (`.tsx .jsx .vue .svelte .astro .html .css .scss`): the gate opens the page in Chromium at 1280x800 and 375x667, compares it with the base commit, and blocks on new JS errors, console errors, failed requests, mobile overflow and WCAG violations. Pages that look different must be reviewed once;
+   - **UI flows**: every `.agy/flows/*.json` runs in Chromium (see rule 15).
 2. **If the gate blocks you**, the reason lists each failure. Fix the cause. Then finish again.
    - **Review points** ("needs a second look") are not failures. Answer each one: fix it, or say why it is intended. Then finish again.
    - "Your tests pass without your change" means your test proves nothing. Make it fail on the old code.
@@ -34,6 +35,7 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
 12. **Write complete code.** Never write `// ... existing code ...` or `# rest unchanged` in a file edit: the file gets exactly what you write, so the code those comments stand for is deleted. The guard refuses such edits. Do not leave `debugger`, `breakpoint()`, `raise NotImplementedError` or new TODOs for work the task needs.
 13. **Do not make tests pass by changing them.** `.only`, `.skip`, `xit`, `@pytest.mark.skip`, `xfail` fail the gate. Removed assertions, changed expected values and deleted test files must be explained. If an old expectation was right, fix the code.
 14. **Import only what exists.** A JS/TS import of a package that is in no `package.json` and not in `node_modules` fails the gate. Check the real package name before you import it; add new dependencies with the package manager.
+15. **Try the UI like a user.** When you change UI behaviour, write `.agy/flows/<name>.json`: `{"name": ..., "route": "/page", "steps": [{"fill": "#q", "value": "x"}, {"click": "role=button[name='Search']"}, {"expect_text": "1 result"}]}`. Use the real selectors from the code you wrote. A failing flow means the feature does not work: fix the code, not the flow.
 
 ---
 

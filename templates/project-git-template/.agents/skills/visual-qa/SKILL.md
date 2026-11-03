@@ -36,6 +36,18 @@ python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/visual_qa.py path
 Exit code 0 means a clean page. Exit code 1 means defects: read `page_errors`, `console_errors`, `http_errors` and `a11y_violations` in the JSON output.
 Then open `desktop_preview.png` and `mobile_preview.png` (paths in `screenshots`) and look at them.
 
+### Method 2: UI flows (required for behaviour changes)
+Screenshots prove the page renders. A flow proves it works. Write `.agy/flows/<name>.json` with the steps a user takes and `expect_*` checks on the result:
+```json
+{"name": "search finds an item", "route": "/products", "steps": [
+  {"fill": "input[name=q]", "value": "lamp"},
+  {"press": "Enter", "selector": "input[name=q]"},
+  {"expect_count": "[data-testid=product-card]", "count": 3},
+  {"expect_url": "?q=lamp"}
+]}
+```
+Run it: `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/ui_flows.py run .agy/flows/<name>.json --base-url http://localhost:5173`. The Stop gate runs every flow at each stop and blocks on a failing step, a JS exception, a console error or a failed request. Cover the main path and one error path (empty input, wrong password).
+
 ### Method 0: The gate itself
 `python3 ~/.gemini/config/plugins/antigravity-dev-suite/scripts/agy_hook.py check` runs the same visual step as the Stop gate, with the dev server settings from `.agents/agy.json`.
 

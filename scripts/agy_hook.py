@@ -395,7 +395,8 @@ class CheckResult:
         self.failures.append((title, _shorten(detail)))
 
 
-def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool = True, base: str = "") -> CheckResult:
+def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool = True, base: str = "",
+               since: float = 0.0) -> CheckResult:
     """The verification gate. Cheap checks first; tests only when the code parses.
     `visual=False` skips the browser step (used by the git pre-commit hook)."""
     result = CheckResult()
@@ -474,6 +475,8 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
         cmd = cmds.get(key)
         if not cmd:
             continue
+        if key == "test" and run_targeted_tests(root, cmd, tests, prod, cfg, timeout, result):
+            continue  # the changed and related tests fail: the full suite waits for them
         if key == "test" and visual and prod and require_tests and cfg.get("coverage", True) \
                 and env_flag("AGY_COVERAGE", True):
             code, out = run_tests_with_coverage(root, cmd, timeout, result)
@@ -489,6 +492,15 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
             "No test command found. Set \"test_command\" in .agents/agy.json to enable the test gate."
         )
 
+    # 4a. Build: bundler and compiler errors that tests and typecheck miss (unresolved
+    # imports, env access at build time, SSR errors). Only once everything else passes.
+    build = build_command(root, cfg, code_files, visual)
+    if build and result.ok:
+        code, out = run_shell(build, root, int(cfg.get("build_timeout", timeout)))
+        result.ran.append("build")
+        if code != 0:
+            result.fail(f"Build failed (`{build}`, exit {code})", _condense(out))
+
     # 4b. Lint on the changed lines only, with the linters the project already has.
     if "lint" not in cmds and cfg.get("lint_changed_lines", True):
         try:
@@ -500,15 +512,94 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
         except Exception as e:
             result.fail("Lint step crashed", f"{e}\n{traceback.format_exc(limit=3)}")
 
-    # 5. Visual QA: open the changed UI in a browser (desktop + mobile).
+    # 5. Visual QA: open the changed UI in a browser (desktop + mobile) and run the UI flows.
     if visual:
-        run_visual_step(root, code_files, cfg, result, base)
+        run_visual_step(root, code_files, cfg, result, base, since)
 
     # 6. Second-look reviews: only when everything else passes (skipped with the browser
     # step by the fast pre-commit mode).
     if result.ok and visual:
         run_reviews(root, code_files, prod, tests, cmds.get("test", ""), cfg, result, base, timeout)
     return result
+
+
+JS_SOURCE_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro", ".css", ".scss"}
+
+
+def build_command(root: Path, cfg: Dict[str, Any], code_files: List[str], visual: bool) -> str:
+    """`build_command` from the config; else, in the full gate, the project's own `build`
+    script when JS/TS/UI files changed and dependencies are installed. `false` turns it off."""
+    val = cfg.get("build_command")
+    if val is False or (isinstance(val, str) and not val.strip()):
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if not visual or not env_flag("AGY_BUILD", True):
+        return ""
+    if not any(Path(f).suffix.lower() in JS_SOURCE_EXTENSIONS for f in code_files):
+        return ""
+    pkg = root / "package.json"
+    if not pkg.is_file() or not (root / "node_modules").is_dir():
+        return ""
+    try:
+        scripts = (json.loads(pkg.read_text(encoding="utf-8")) or {}).get("scripts") or {}
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(scripts, dict) or not isinstance(scripts.get("build"), str):
+        return ""
+    if (root / "pnpm-lock.yaml").is_file():
+        return "pnpm run build"
+    if (root / "yarn.lock").is_file():
+        return "yarn build"
+    if (root / "bun.lockb").is_file() or (root / "bun.lock").is_file():
+        return "bun run build"
+    return "npm run build"
+
+
+def related_tests(root: Path, prod: List[str], limit: int = 20) -> List[str]:
+    """Existing test files named after the changed production files (test_x.py, x.test.ts, ...)."""
+    stems = {Path(f).stem.split(".")[0] for f in prod}
+    if not stems:
+        return []
+    code, out = git(["ls-files", "-z"], root)
+    if code != 0:
+        return []
+    found: List[str] = []
+    for rel in out.split("\0"):
+        name = rel.rsplit("/", 1)[-1]
+        if not rel or not is_test(rel):
+            continue
+        base = re.sub(r"(_test|_spec)$", "", re.sub(r"^test_", "", name).split(".")[0])
+        if base in stems and (root / rel).is_file():
+            found.append(rel)
+            if len(found) >= limit:
+                break
+    return found
+
+
+def run_targeted_tests(root: Path, cmd: str, tests: List[str], prod: List[str], cfg: Dict[str, Any],
+                       timeout: int, result: CheckResult) -> bool:
+    """Fast first pass: the changed tests and the tests named after the changed files.
+    Returns True when they fail (the failure is recorded and the full suite is skipped)."""
+    if cfg.get("targeted_tests", True) is False:
+        return False
+    targets = sorted(set(tests) | set(related_tests(root, prod)))
+    if not targets:
+        return False
+    try:
+        from discipline import scoped_test_command
+        scoped = scoped_test_command(cmd, targets)
+    except Exception:
+        return False
+    if scoped == cmd:
+        return False
+    code, out = run_shell(scoped, root, timeout)
+    result.ran.append("targeted-tests")
+    if code == 0 or (code == 5 and PYTEST_RE.search(cmd)):
+        return False
+    result.fail(f"Tests failed: changed and related tests (`{scoped}`, exit {code})", _condense(out))
+    result.notes.append("The full test suite runs once these tests pass.")
+    return True
 
 
 def run_tests_with_coverage(root: Path, cmd: str, timeout: int, result: CheckResult) -> Tuple[int, str]:
@@ -645,7 +736,8 @@ def _review_tests(root: Path, tests: List[str], test_cmd: str, result: CheckResu
         result.notes.append(f"Test proof skipped: {detail}")
 
 
-def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], result: CheckResult, base: str = "") -> None:
+def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], result: CheckResult, base: str = "",
+                    since: float = 0.0) -> None:
     try:
         from visual_gate import frontend_files, run_visual_gate, visual_config
         fe = frontend_files(code_files)
@@ -655,7 +747,7 @@ def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], resu
         if vcfg is None:
             result.notes.append("Visual QA turned off for this project.")
             return
-        outcome = run_visual_gate(root, fe, vcfg, state_dir(root) / "visual", base=base)
+        outcome = run_visual_gate(root, fe, vcfg, state_dir(root) / "visual", base=base, since=since)
         if outcome.ran:
             result.ran.append("visual-qa")
         result.notes.extend(outcome.notes)
@@ -1028,6 +1120,12 @@ def apply_second_opinion(root: Path, cfg: Dict[str, Any], files: List[str], base
 def gate_extra(root: Path, cfg: Dict[str, Any]) -> str:
     """Everything besides the changed files that changes the gate's verdict."""
     extra = json.dumps(cfg, sort_keys=True)
+    try:
+        from ui_flows import flows_fingerprint
+        from visual_gate import visual_config
+        extra += "\0" + flows_fingerprint(root, visual_config(cfg))
+    except Exception as err:
+        logger.debug("Flow fingerprint failed: %s", err)
     if criteria_enabled(cfg):
         from guidance import criteria_fingerprint
         extra += "\0" + criteria_fingerprint(root)
@@ -1084,7 +1182,7 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
         report = cached["report"]
         log("block", why="unchanged")
     else:
-        result = run_checks(root, files, cfg, base=base)
+        result = run_checks(root, files, cfg, base=base, since=float(sess.get("t") or 0))
         apply_criteria(root, cfg, result, float(sess.get("t") or 0))
         if result.ok:
             apply_second_opinion(root, cfg, files, base, result)

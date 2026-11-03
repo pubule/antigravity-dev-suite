@@ -20,6 +20,9 @@ Before/after: the gate opens the same pages on the base commit (a detached
 Only defects the base commit did not have block. Pages whose screenshots changed
 are listed with before, after and diff images, and agy must review them once.
 
+UI flows: the JSON user journeys in `.agy/flows/` (see ui_flows.py) run on the same
+server. A failing flow blocks; a UI change without a fresh flow gets one review turn.
+
 When none of these works, or Playwright/Chromium is missing, the gate fails with
 the exact fix. It never skips in silence. Turn the step off with
 `"visual_qa": false` in `.agents/agy.json` or `AGY_VISUAL_QA=0`.
@@ -320,6 +323,7 @@ class Plan:
         self.kind = ""            # "static" | "url" | "auto"
         self.port_command = ""    # dev_command with a {port} placeholder: baseline possible
         self.routes: List[str] = []
+        self.base_url = ""        # where UI flows open their routes
 
 
 def free_port() -> int:
@@ -365,6 +369,7 @@ def _resolve_plan(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
 
     if url:
         plan.kind = "url"
+        plan.base_url = url
         if server_answers(url):
             plan.pages = _url_pages(url, routes)
             return plan
@@ -396,6 +401,7 @@ def _resolve_plan(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
 
         if _wait_for(new_port, server, startup):
             base = f"http://localhost:{found[0]}"
+            plan.base_url = base
             outcome.notes.append(f"Visual QA started `{dev_command}` on {base}.")
             plan.server = server
             plan.pages = _url_pages(base, routes)
@@ -421,6 +427,7 @@ def _resolve_plan(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
     if active:
         plan.kind = "auto"
         base = f"http://localhost:{active[0]}"
+        plan.base_url = base
         outcome.notes.append(f"Visual QA used the dev server already running on {base} (auto-detected).")
         plan.pages = _url_pages(base, routes)
         return plan
@@ -568,8 +575,52 @@ def _float(val: Any, default: float) -> float:
         return default
 
 
+def run_flow_step(root: Path, plan: Plan, vcfg: Dict[str, Any], out_base: Path,
+                  outcome: VisualOutcome, since: float) -> None:
+    """Run agy's UI flows on the same server; ask for one when the change has none."""
+    from ui_flows import FLOW_EXAMPLE, FLOWS_REL, find_flows, format_failure, run_flows
+    flows = find_flows(root, vcfg)
+    fresh = [f for f in flows if _mtime(f) >= since]
+    if flows:
+        timeout = _int(vcfg.get("flow_timeout"), DEFAULT_PAGE_TIMEOUT)
+        results = run_flows(root, flows, plan.base_url, out_base / "flows", timeout)
+        if any(r.get("status") == "SKIPPED_DEPENDENCY" for r in results):
+            outcome.fail("UI flows could not run: Playwright or Chromium is missing", install_hint())
+            return
+        bad = [r for r in results if r.get("status") != "PASS"]
+        passed = [r for r in results if r.get("status") == "PASS"]
+        if passed:
+            outcome.notes.append("UI flows passed: " + ", ".join(
+                f"{r.get('flow')} ({r.get('steps_run')} steps)" for r in passed))
+        if bad:
+            outcome.fail(
+                "UI flows failed",
+                "A flow is a user journey through the page. Open the screenshots, find out why the step "
+                "fails in the app, and fix the code. Change a flow only when the flow itself is wrong "
+                "(wrong selector, wrong expectation), and say so.\n\n"
+                + "\n\n".join(format_failure(r) for r in bad))
+    if not fresh:
+        outcome.review.append((
+            "No UI flow tries your change",
+            "The page renders, but nothing checked that it works. Write a flow in "
+            f"{FLOWS_REL}/<name>.json that does what a user does with the part you changed (click, type, "
+            "submit) and checks the result with expect_* steps. The gate runs it in Chromium at every "
+            "stop. Example:\n" + FLOW_EXAMPLE +
+            "\nSelectors: CSS, text=..., role=button[name='...'], [data-testid=...]. Static pages use "
+            "\"file\": \"path/page.html\" instead of \"route\". If the change has no behaviour to try "
+            "(pure styling), say so in your answer.",
+        ))
+
+
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def run_visual_gate(root: Path, fe_files: List[str], vcfg: Dict[str, Any], out_base: Path,
-                    base: str = "") -> VisualOutcome:
+                    base: str = "", since: float = 0.0) -> VisualOutcome:
     outcome = VisualOutcome()
     page_timeout = _int(vcfg.get("timeout"), DEFAULT_PAGE_TIMEOUT)
     threshold = _float(vcfg.get("diff_threshold"), DEFAULT_DIFF_THRESHOLD)
@@ -585,6 +636,8 @@ def run_visual_gate(root: Path, fe_files: List[str], vcfg: Dict[str, Any], out_b
                 outcome.fail("Visual QA could not run: Playwright or Chromium is missing", install_hint())
                 return outcome
             current[page.label] = data
+        if vcfg.get("flows", True) is not False:
+            run_flow_step(root, plan, vcfg, out_base, outcome, since)
     finally:
         if plan.server is not None:
             plan.server.stop()
