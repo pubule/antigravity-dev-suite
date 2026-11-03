@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.22.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.23.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -93,7 +93,7 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.22.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.23.0)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
@@ -127,6 +127,7 @@ antigravity-dev-suite/
 │   ├── agy_hook.py             # Single entry point for all hooks + verification gate (check, doctor, stats)
 │   ├── guidance.py             # Guided start: repo map, acceptance criteria, language rules on demand
 │   ├── second_opinion.py       # Optional diff review by a stronger model (Anthropic or Gemini API)
+│   ├── ui_flows.py             # UI flows: user journeys agy writes, run in Chromium by the gate
 │   ├── integrity.py            # Diff integrity: placeholders, disabled tests, debugger, invented imports
 │   ├── gate_stats.py           # Stop gate verdict log and statistics
 │   ├── setup_hooks.py          # Registers hooks in ~/.gemini/config/hooks.json (install/update/uninstall)
@@ -222,7 +223,7 @@ powershell -ExecutionPolicy Bypass -File .\update.ps1   # Windows
 | `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`), edits whose new content has placeholder comments instead of code (`// ... existing code ...`), and edits to files agy has not opened in this conversation |
 | `PostToolUse` | after file writes, `run_command` and read tools (`view_file`, `grep_search`, ...) | syntax probe of the written file; records which files agy has seen |
 | `PreInvocation` | before each model call | first call: repository map and the request for acceptance criteria (guided start); each language's rules the first time a file of that language changes; open syntax errors |
-| `Stop` | when agy wants to finish | runs syntax, static critic, diff integrity, test-first, typecheck/lint, tests (with coverage when available), acceptance criteria and, for UI changes, visual QA on all changed files; blocks with the full report until they pass. Then asks for one review turn when needed (see below), optionally after a second opinion from a stronger model |
+| `Stop` | when agy wants to finish | runs syntax, static critic, diff integrity, test-first, typecheck/lint, tests (changed and related ones first, then the suite with coverage when available), the build, acceptance criteria and, for UI changes, visual QA and UI flows on all changed files; blocks with the full report until they pass. Then asks for one review turn when needed (see below), optionally after a second opinion from a stronger model |
 
 The gate runs the checks itself; it never trusts a "PASS" written by the agent. Run it by hand with `python3 scripts/agy_hook.py check [project]`. The pre-commit hook (`install_git_hooks.py`) runs the same gate without the browser step (`check --no-visual`).
 
@@ -239,6 +240,8 @@ These make a fast model work like a careful one.
 | **Changed lines no test runs** | review | The test run is instrumented when the runner supports it (pytest with pytest-cov, Vitest with a coverage provider, Jest, `npm test` running either). Changed production lines that no test executed are listed. Without the plugin, the plain test command runs and the gate adds a note. Off: `"coverage": false` or `AGY_COVERAGE=0` (also off with the test-first rule). |
 | **Acceptance criteria** | failure / review | At the start agy writes `.agy/criteria.md` (3 to 5 checkable behaviours). At Stop, an unticked criterion fails; a missing file, a file older than the conversation or a criterion ticked without evidence gets a review. `.agy/` is added to `.git/info/exclude`. Off: `"criteria": false` or `AGY_CRITERIA=0`. |
 | **Loop breaker** | report | The same failure twice in a row (numbers ignored) adds a debug protocol: reproduce, read the code path, test hypotheses before editing. At the 4th time (`AGY_LOOP_ESCALATE`) agy must stop and explain to you what fails, what it tried and what it needs; the next stop is allowed. |
+| **Targeted tests first** | failure | When the change has test files, or tests named after the changed files (`test_x.py`, `x.test.ts`, `x_test.go`), the gate runs only those first (pytest, Jest, Vitest, `npm test`). If they fail, it reports them at once and skips the full suite until they pass. Off: `"targeted_tests": false`. |
+| **Build** | failure | `build_command`, or, when JS/TS/UI files changed and `node_modules` exists, the project's own `build` script (`npm`, `pnpm`, `yarn` or `bun` from the lock file). Runs only after all other hard checks pass. It catches bundler, SSR and import errors that tests and `tsc` miss. Off: `"build_command": false` or `AGY_BUILD=0`; timeout `build_timeout`. Not run by the pre-commit hook unless `build_command` is set. |
 | **Second opinion** | review | Opt-in, see below. |
 
 ### Integrity checks
@@ -292,6 +295,17 @@ If none works, or Playwright/Chromium is missing, the gate blocks with the exact
 - When a page looks different (more than `diff_threshold` of its pixels, default 0.1%), agy gets the before, after and diff images (changed pixels in red) and must review them once before it can finish. New pages are listed too. Editing files again runs all checks again.
 - Baseline results are cached per base commit. Turn the comparison off with `"compare": false`.
 
+**UI flows.** A page that renders is not a page that works. agy writes short user journeys in `.agy/flows/<name>.json`, and the gate runs every flow in Chromium on the same dev server at each stop. A flow fails on its first failing step and on any JS exception, console error or failed same-origin request while it runs. The report gives the step, the reason and a screenshot of the failure. When the UI changed and no flow was written or edited in this conversation, agy gets one review turn that asks for a flow, or for an explanation if the change has no behaviour to try (pure styling).
+```json
+{"name": "add an item", "route": "/", "steps": [
+  {"fill": "#title", "value": "Milk"},
+  {"click": "role=button[name='Add']"},
+  {"expect_text": "Milk", "selector": "ul.items"},
+  {"expect_count": "ul.items li", "count": 1}
+]}
+```
+Selectors use Playwright syntax (CSS, `text=`, `role=`, `[data-testid=]`). Actions: `goto click dblclick fill press select check uncheck hover wait wait_for viewport screenshot`. Checks: `expect_text expect_no_text expect_visible expect_hidden expect_url expect_count expect_value expect_enabled expect_disabled`. A static page uses `"file": "public/index.html"` instead of `"route"`. Flows in `.agy/` stay out of git (they keep running as a regression check for later changes). To commit team flows, set `visual_qa.flows_dir` (for example `"e2e/agy-flows"`). Run one by hand with `python3 scripts/ui_flows.py run FLOW.json --base-url http://localhost:5173`. Off: `"visual_qa": {"flows": false}`.
+
 ### Project configuration (optional): `.agents/agy.json`
 Only you edit this file; the guard blocks the agent from writing it.
 ```json
@@ -299,6 +313,8 @@ Only you edit this file; the guard blocks the agent from writing it.
   "test_command": "npm test",
   "typecheck_command": "npx tsc --noEmit",
   "lint_command": "npx eslint .",
+  "build_command": "npm run build",
+  "targeted_tests": true,
   "require_tests": true,
   "test_exempt": ["src/generated/*"],
   "test_timeout": 600,
@@ -321,7 +337,10 @@ Only you edit this file; the guard blocks the agent from writing it.
     "startup_timeout": 90,
     "timeout": 90,
     "compare": true,
-    "diff_threshold": 0.001
+    "diff_threshold": 0.001,
+    "flows": true,
+    "flows_dir": "e2e/agy-flows",
+    "flow_timeout": 90
   }
 }
 ```
@@ -337,6 +356,7 @@ Without it the gate auto-detects the test command (pytest, vitest/jest, cargo, g
 | `AGY_TEST_TIMEOUT=600` | seconds for each test/typecheck/lint command |
 | `AGY_VISUAL_QA=0` | turn the visual QA step off |
 | `AGY_READ_BEFORE_WRITE=0` | allow edits to files agy has not opened |
+| `AGY_BUILD=0` | do not run the project's build script in the gate |
 | `AGY_INTEGRITY=0` | turn the integrity checks off (placeholders, disabled tests, debugger, invented imports, ...) |
 | `AGY_COVERAGE=0` | do not instrument the tests for changed-line coverage |
 | `AGY_CRITERIA=0` | do not ask for or check acceptance criteria |

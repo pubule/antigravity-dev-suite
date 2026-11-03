@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.23.0] — 2026-11-03
+
+### 🖱️ Try it like a user, build it, fail fast
+- **UI flows.** agy writes user journeys in `.agy/flows/*.json` (fill, click, press, select, ... and `expect_text`, `expect_url`, `expect_count`, ...). The Stop gate runs every flow in Chromium on the same dev server as the visual step, or from disk for static pages. It blocks on a failing step, a JS exception, a console error or a failed same-origin request, and reports the step, the Playwright message and a screenshot. When the UI changed and no flow was written or edited in this conversation, agy gets one review turn asking for one. Flows are part of the gate fingerprint, so editing a flow re-runs the gate. New module `scripts/ui_flows.py` (also a CLI: `ui_flows.py run FLOW.json --base-url URL`). Config: `visual_qa.flows`, `flows_dir` (committed team flows), `flow_timeout`.
+- **Build step** (failure). `build_command`, or the project's `build` script when JS/TS/UI files changed and `node_modules` exists. The package manager comes from the lock file. It runs only when all other hard checks pass. Config `build_command` (`false` turns it off), `build_timeout`; env `AGY_BUILD` (reserved for the user).
+- **Targeted tests first** (failure). The changed tests and the existing tests named after the changed files run alone first (pytest, Jest, Vitest, `npm test`). If they fail, the full suite is skipped until they pass, which shortens each fix loop. Config `targeted_tests`.
+- `rules/AGENTS.md` rule 15 and the visual-qa skill: how to write flows.
+
+---
+
 ## [1.22.0] — 2026-11-03
 
 ### 🧱 Integrity of the diff
