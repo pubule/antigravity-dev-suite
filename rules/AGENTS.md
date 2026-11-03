@@ -14,7 +14,7 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
    - **test-first**: a changed production file needs a new or changed test file;
    - typecheck and lint, when the project configures them;
    - the project test suite;
-   - **visual QA** when you change UI files (`.tsx .jsx .vue .svelte .astro .html .css .scss`): the gate opens the page in Chromium at 1280x800 and 375x667 and blocks on JS errors, console errors, failed requests, mobile overflow and WCAG violations.
+   - **visual QA** when you change UI files (`.tsx .jsx .vue .svelte .astro .html .css .scss`): the gate opens the page in Chromium at 1280x800 and 375x667, compares it with the base commit, and blocks on new JS errors, console errors, failed requests, mobile overflow and WCAG violations. Pages that look different must be reviewed once.
 2. **If the gate blocks you**, the reason lists each failure. Fix the cause. Then finish again.
 3. **Never weaken the checks.** Do not delete, skip or loosen tests. Do not add `# nosec` to silence a finding you did not fix. Do not edit `.agents/agy.json`. Do not use `--no-verify`. The guard blocks these actions.
 4. **Run the gate yourself** before you finish. Use the command from the gate message, or:
@@ -90,7 +90,8 @@ The Stop gate runs visual QA on every UI change. To pass it:
 2. When the gate lists screenshots, open each one and look at it. Say what you see before you fix the code.
 3. Fix the cause of each defect: zero console errors, no failed requests, no horizontal overflow at 375px.
 4. Check what the page shows, not only the errors: text cut off, overlapping elements, wrong layout. The gate cannot judge these. You can.
-5. Keep touch targets at 44x44px or more.
+5. When the gate shows "Visual changes to review", open each before, after and diff image. For each page, say what changed and whether you meant it. Fix the changes you did not mean.
+6. Keep touch targets at 44x44px or more.
 
 ---
 

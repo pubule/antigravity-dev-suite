@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.18.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.19.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -93,7 +93,7 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.18.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.19.0)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
@@ -225,11 +225,16 @@ When the change touches `.tsx .jsx .vue .svelte .astro .html .css .scss .sass .l
 
 Which page it opens, first match wins:
 1. `visual_qa.url` (+ `routes`). If nothing answers there and `dev_command` is set, the gate starts the command, waits up to `startup_timeout` seconds, checks, and stops the whole process tree.
-2. `dev_command` alone: the gate starts it and uses the first new local dev port.
+2. `dev_command` alone: the gate starts it and uses the first new local dev port. With a `{port}` placeholder (`npm run dev -- --port {port}`) the gate picks a free port itself.
 3. Changed static HTML files (not server templates such as Jinja or Django), opened from disk.
 4. A dev server already running on a common local port (5173, 3000, 8080, ...).
 
 If none works, or Playwright/Chromium is missing, the gate blocks with the exact fix. It never skips in silence. `agy_hook.py doctor` reports whether Chromium is ready.
+
+**Before/after.** The gate also opens the same pages on the commit the session started from (`HEAD` for `check`), in a temporary `git worktree` with links to your `node_modules` and copies of your `.env` files. For a dev server this needs the `{port}` placeholder, so both versions can run side by side.
+- Only **new** defects block. Problems the base commit already had are reported as a note.
+- When a page looks different (more than `diff_threshold` of its pixels, default 0.1%), agy gets the before, after and diff images (changed pixels in red) and must review them once before it can finish. New pages are listed too. Editing files again runs all checks again.
+- Baseline results are cached per base commit. Turn the comparison off with `"compare": false`.
 
 ### Project configuration (optional): `.agents/agy.json`
 Only you edit this file; the guard blocks the agent from writing it.
@@ -244,10 +249,12 @@ Only you edit this file; the guard blocks the agent from writing it.
   "critic": true,
   "visual_qa": {
     "url": "http://localhost:5173",
-    "dev_command": "npm run dev",
+    "dev_command": "npm run dev -- --port {port}",
     "routes": ["/", "/login"],
     "startup_timeout": 90,
-    "timeout": 90
+    "timeout": 90,
+    "compare": true,
+    "diff_threshold": 0.001
   }
 }
 ```
@@ -384,6 +391,9 @@ python3 scripts/visual_qa.py --port 3000
 
 # Run in self-test synthetic mode
 python3 scripts/visual_qa.py --test-mode
+
+# Pixel diff of two screenshots (changed pixels in red)
+python3 scripts/visual_qa.py --diff before.png after.png --diff-out diff.png
 
 # Exit codes: 0 clean, 1 defects or error, 3 skipped (only with --fail-on-skip)
 python3 scripts/visual_qa.py http://localhost:5173 --fail-on-skip

@@ -377,6 +377,9 @@ class TestVisualGate(Base):
         self.assertIn("HorizontalOverflowDetected", out["reason"])
         self.assertIn("mobile_preview.png", out["reason"])
         self.write("index.html", CLEAN_PAGE)
+        out = self.stop()
+        # A new page passes the checks but is shown to agy once for review.
+        self.assertNotIn("Visual QA found defects", out.get("reason", ""))
         self.assertEqual(self.stop()["decision"], "allow")
 
     def test_dev_command_is_started_and_stopped(self):
@@ -394,6 +397,72 @@ class TestVisualGate(Base):
         from visual_qa import is_http_server_active
         time.sleep(0.5)
         self.assertFalse(is_http_server_active(port, "127.0.0.1"), "dev server left running")
+
+
+class TestVisualBaseline(TestVisualGate):
+    """Before/after comparison against the base commit (PR 2)."""
+
+    def commit_all(self, msg="base"):
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", msg)
+        run_json(["session-start"], dict(self.base, conversationId=msg), self.env)
+        self.base = dict(self.base, conversationId=msg)
+
+    def test_new_defects_ignores_positions_and_origins(self):
+        from visual_gate import new_defects
+        base = ["Page error: boom at http://localhost:5001/app.js:10:5", "Failed request: HTTP 404 on http://localhost:5001/a.png"]
+        cur = ["Page error: boom at http://localhost:6002/app.js:12:9", "Failed request: HTTP 404 on http://localhost:6002/a.png",
+               "Page error: fresh"]
+        self.assertEqual(new_defects(cur, base), ["Page error: fresh"])
+
+    def test_old_defects_do_not_block_new_ones_do(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        self.write("index.html", CLEAN_PAGE.replace("<p>", "<script src=\"old-missing.js\"></script><p>"))
+        self.commit_all()
+        # Text-only edit: the old 404 is still there but must not block.
+        self.write("index.html", CLEAN_PAGE.replace("<p>", "<script src=\"old-missing.js\"></script><p>").replace("hello", "hello!"))
+        out = self.stop()
+        self.assertNotIn("Visual QA found defects", out.get("reason", ""))
+        self.write("index.html", BROKEN_PAGE)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("These defects are new", out["reason"])
+        self.assertIn("boom", out["reason"])
+        res = subprocess.run(["git", "worktree", "list"], cwd=str(self.repo), capture_output=True, text=True)
+        self.assertEqual(len(res.stdout.strip().splitlines()), 1, res.stdout)
+
+    def test_visual_change_needs_one_review_turn(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        self.write("index.html", CLEAN_PAGE)
+        self.commit_all()
+        self.write("index.html", CLEAN_PAGE.replace("<p>hello</p>", "<p style=\"font-size:48px\">hello again</p>"))
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Visual changes to review", out["reason"])
+        self.assertIn("desktop_diff.png", out["reason"])
+        self.assertIn("All checks pass", out["reason"])
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_dev_server_baseline_keeps_real_node_modules(self):
+        if not playwright_ready():
+            self.skipTest("Playwright Chromium not available")
+        self.write("site/index.html", CLEAN_PAGE)
+        self.write("node_modules/pkg/index.js", "module.exports = 1;\n")
+        self.write(".gitignore", "node_modules/\n")
+        py = f'"{sys.executable}"' if " " in sys.executable else sys.executable
+        self.write(".agents/agy.json", json.dumps({"require_tests": False, "visual_qa": {
+            "dev_command": f"{py} -m http.server {{port}} --bind 127.0.0.1 --directory site"}}))
+        self.commit_all()
+        self.write("site/index.html", CLEAN_PAGE.replace("<p>", "<script src=\"/missing.js\"></script><p>"))
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("These defects are new", out["reason"])
+        self.assertIn("missing.js", out["reason"])
+        self.assertTrue((self.repo / "node_modules" / "pkg" / "index.js").is_file())
+        res = subprocess.run(["git", "worktree", "list"], cwd=str(self.repo), capture_output=True, text=True)
+        self.assertEqual(len(res.stdout.strip().splitlines()), 1, res.stdout)
 
 
 class TestDoctor(Base):
