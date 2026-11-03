@@ -802,6 +802,31 @@ class TestSecondOpinion(Base):
         self.assertEqual(run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)["decision"], "allow")
 
 
+class TestGateStats(Base):
+    def test_verdicts_are_logged_and_summarised(self):
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        self.write("app.py", "def f(:\n    pass\n")
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "continue")
+        self.write("app.py", "def f():\n    pass\n")
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "allow", out.get("reason"))
+        res = run(["stats", str(self.repo)], env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("2 verdict(s) in 1 conversation(s)", res.stdout)
+        self.assertIn("pass 1", res.stdout)
+        self.assertIn("block 1", res.stdout)
+        self.assertIn("Syntax errors", res.stdout)
+        self.assertIn("attempts to pass: 2.0", res.stdout)
+        data = json.loads(run(["stats", str(self.repo), "--json", "--days", "1"], env=env).stdout)
+        self.assertEqual(data["verdicts"], {"block": 1, "pass": 1})
+        self.assertEqual(data["first_try_pass_rate"], 0.0)
+
+    def test_no_log_yet(self):
+        res = run(["stats", str(self.repo)], env=self.env)
+        self.assertIn("No stop gate verdicts recorded yet", res.stdout)
+
+
 class TestReadBeforeWrite(Base):
     def tool(self, hook, name, args, **extra):
         payload = dict(self.base, toolCall={"name": name, "args": args})

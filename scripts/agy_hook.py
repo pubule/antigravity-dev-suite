@@ -6,11 +6,12 @@ Usage (the installer writes these commands into ~/.gemini/config/hooks.json):
     python agy_hook.py session-start   # SessionStart: remember the base commit
     python agy_hook.py pre-tool        # PreToolUse: safety guard and bypass blocker
     python agy_hook.py post-tool       # PostToolUse: syntax probe of the written file
-    python agy_hook.py pre-invocation  # PreInvocation: feed syntax errors back to the model
+    python agy_hook.py pre-invocation  # PreInvocation: guided start, language rules, syntax errors
     python agy_hook.py stop            # Stop: run the verification gate
     python agy_hook.py check [DIR]     # Run the same gate by hand (exit 1 on failure)
     python agy_hook.py check --no-visual [DIR]  # Same, without the browser step and reviews
     python agy_hook.py doctor          # Self-test of the installation
+    python agy_hook.py stats [DIR] [--days N] [--json]  # Stop gate statistics
 
 Design rules:
 - The Stop gate runs the checks itself. It never trusts a record written by the agent.
@@ -459,7 +460,8 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
         cmd = cmds.get(key)
         if not cmd:
             continue
-        if key == "test" and visual and prod and cfg.get("coverage", True) and env_flag("AGY_COVERAGE", True):
+        if key == "test" and visual and prod and require_tests and cfg.get("coverage", True) \
+                and env_flag("AGY_COVERAGE", True):
             code, out = run_tests_with_coverage(root, cmd, timeout, result)
         else:
             code, out = run_shell(cmd, root, timeout)
@@ -1012,18 +1014,26 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
     if cached and cached.get("ok"):
         return {"decision": "allow"}
 
+    t0 = time.time()
+
+    def log(verdict: str, result: Optional[CheckResult] = None, why: str = "") -> None:
+        log_verdict(root, conv, verdict, files, t0, result, why)
+
     blocks = state.get("blocks", {})
     count = int((blocks.get(fp) or {}).get("n", 0))
     max_blocks = int(os.environ.get("AGY_STOP_GATE_MAX_BLOCKS", "4"))
     if count >= max_blocks:
         # The agent stopped repeatedly without changing anything: stop looping,
         # but leave a trace the statusline and the next session can show.
+        log("gave_up", why="block limit")
         return _give_up(root, state, fp, files, "block limit reached without progress")
 
     if cached and not cached.get("ok") and cached.get("report"):
         if ((state.get("loops") or {}).get(conv) or {}).get("escalated"):
+            log("gave_up", why="stuck")
             return _give_up(root, state, fp, files, "stuck on the same failure; agy was told to ask the user")
         report = cached["report"]
+        log("block", why="unchanged")
     else:
         result = run_checks(root, files, cfg, base=base)
         apply_criteria(root, cfg, result, float(sess.get("t") or 0))
@@ -1037,6 +1047,7 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
             state.pop("gave_up", None)
             reset_loop(state, conv)
             save_state(root, state)
+            log("review", result)
             return {"decision": "continue", "reason": format_review(result)}
         if result.ok:
             cache[fp] = {"ok": True, "t": time.time()}
@@ -1047,18 +1058,39 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
             state.pop("gave_up", None)
             reset_loop(state, conv)
             save_state(root, state)
+            log("pass", result)
             return {"decision": "allow"}
         report = format_report(result, files)
         report, stuck = loop_breaker(state, conv, result, report)
         if stuck:
+            log("gave_up", result, why="stuck")
             return _give_up(root, state, fp, files, "stuck on the same failure; agy was told to ask the user")
         cache[fp] = {"ok": False, "report": report, "t": time.time()}
         state["checks"] = _trim_dict(cache, 20)
+        log("block", result)
 
     blocks[fp] = {"n": count + 1, "t": time.time()}
     state["blocks"] = _trim_dict(blocks, 20)
     save_state(root, state)
     return {"decision": "continue", "reason": report}
+
+
+def log_verdict(root: Path, conv: str, verdict: str, files: List[str], t0: float,
+                result: Optional[CheckResult] = None, why: str = "") -> None:
+    """One line per gate verdict in <state-dir>/gate-log.jsonl, for `agy_hook.py stats`."""
+    entry: Dict[str, Any] = {"t": round(time.time(), 1), "conv": conv, "verdict": verdict,
+                             "files": len(files), "seconds": round(time.time() - t0, 1)}
+    if why:
+        entry["why"] = why
+    if result is not None:
+        entry["ran"] = result.ran
+        entry["failures"] = [t for t, _ in result.failures]
+        entry["reviews"] = [t for t, _ in result.reviews]
+    try:
+        from gate_stats import append
+        append(state_dir(root), entry)
+    except Exception as err:
+        logger.debug("Gate log failed: %s", err)
 
 
 def _give_up(root: Path, state: Dict[str, Any], fp: str, files: List[str], why: str) -> Dict[str, Any]:
@@ -1194,6 +1226,27 @@ def cli_check(target: str, visual: bool = True) -> int:
     return 1
 
 
+def cli_stats(args: List[str]) -> int:
+    """agy_hook.py stats [DIR] [--days N] [--json]"""
+    days: Optional[int] = None
+    rest: List[str] = []
+    it = iter(args)
+    for a in it:
+        if a == "--days":
+            days = int(next(it, "0") or 0) or None
+        elif a.startswith("--days="):
+            days = int(a.split("=", 1)[1] or 0) or None
+        elif a != "--json":
+            rest.append(a)
+    ws = Path(rest[0] if rest else ".").expanduser().resolve()
+    root = git_root(ws)
+    if root is None:
+        print(f"Not a git repository: {ws}")
+        return 2
+    from gate_stats import cli
+    return cli(state_dir(root), days, "--json" in args)
+
+
 def cli_doctor() -> int:
     """Verify interpreter, installed hooks and the real payload path end to end."""
     import tempfile
@@ -1290,6 +1343,8 @@ def main(argv: List[str]) -> int:
         return cli_check(rest[0] if rest else ".", visual="--no-visual" not in argv[1:])
     if cmd == "doctor":
         return cli_doctor()
+    if cmd == "stats":
+        return cli_stats(argv[1:])
     handler = HANDLERS.get(cmd)
     if handler is None:
         print(f"Unknown command: {cmd}", file=sys.stderr)
