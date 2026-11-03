@@ -459,7 +459,9 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
             continue
         code, out = run_shell(cmd, root, timeout)
         result.ran.append(key)
-        if code != 0:
+        if key == "test" and code == 5 and PYTEST_RE.search(cmd):
+            _no_tests_collected(cmd, tests, result)
+        elif code != 0:
             result.fail(f"{title} (`{cmd}`, exit {code})", _condense(out))
     if "test" not in cmds:
         result.notes.append(
@@ -486,6 +488,25 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
     if result.ok and visual:
         run_reviews(root, code_files, prod, tests, cmds.get("test", ""), cfg, result, base, timeout)
     return result
+
+
+PYTEST_RE = re.compile(r"(^|\s|/)(pytest|py\.test)(\s|$)|-m\s+pytest", re.IGNORECASE)
+
+
+def _no_tests_collected(cmd: str, tests: List[str], result: CheckResult) -> None:
+    """pytest exit 5 = "no tests collected". Not a failure for a project without tests,
+    but a test file agy wrote that pytest cannot see proves nothing."""
+    py_tests = [t for t in tests if t.endswith(".py")]
+    if py_tests:
+        result.fail(
+            f"pytest collected no tests (`{cmd}`, exit 5)",
+            "You changed these test files, but pytest found no test in them:\n"
+            + "\n".join(f"- {t}" for t in py_tests[:15])
+            + "\nName the files test_*.py or *_test.py, the functions test_*, and the classes "
+            "Test* (without __init__). Check testpaths/python_files in pytest.ini or pyproject.toml.",
+        )
+    else:
+        result.notes.append(f"`{cmd}` collected no tests (exit 5): nothing to run yet.")
 
 
 def run_reviews(root: Path, code_files: List[str], prod: List[str], tests: List[str], test_cmd: str,

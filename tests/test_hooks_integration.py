@@ -530,6 +530,24 @@ class TestDiscipline(Base):
         self.assertIn("Public API changed", out["reason"])
         self.assertIn("symbol_impact.py", out["reason"])
 
+    def test_no_tests_collected_is_not_a_failure_without_test_files(self):
+        if not self.has_pytest:
+            self.skipTest("pytest not installed")
+        self.calc("def add(a: int, b: int) -> int:\n    return a + b\n")
+        env = dict(self.env, AGY_REQUIRE_TESTS="0")
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertEqual(out["decision"], "allow", out.get("reason"))
+
+    def test_test_file_pytest_cannot_see_fails(self):
+        if not self.has_pytest:
+            self.skipTest("pytest not installed")
+        self.calc("def add(a: int, b: int) -> int:\n    return a + b\n")
+        self.write("tests/ops_checks.py", self.TEST)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("pytest collected no tests", out["reason"])
+        self.assertIn("tests/ops_checks.py", out["reason"])
+
     def test_changed_lines(self):
         from discipline import changed_lines
         self.write("a.py", "x = 1\ny = 2\nz = 3\n")
