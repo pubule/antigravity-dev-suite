@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.21.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.22.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -93,7 +93,7 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.21.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.22.0)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
@@ -127,6 +127,7 @@ antigravity-dev-suite/
 │   ├── agy_hook.py             # Single entry point for all hooks + verification gate (check, doctor, stats)
 │   ├── guidance.py             # Guided start: repo map, acceptance criteria, language rules on demand
 │   ├── second_opinion.py       # Optional diff review by a stronger model (Anthropic or Gemini API)
+│   ├── integrity.py            # Diff integrity: placeholders, disabled tests, debugger, invented imports
 │   ├── gate_stats.py           # Stop gate verdict log and statistics
 │   ├── setup_hooks.py          # Registers hooks in ~/.gemini/config/hooks.json (install/update/uninstall)
 │   ├── stop_gate.py            # Compatibility wrapper around the agy_hook.py Stop gate
@@ -218,10 +219,10 @@ powershell -ExecutionPolicy Bypass -File .\update.ps1   # Windows
 | Hook | When | What it does |
 |---|---|---|
 | `SessionStart` | new conversation | remembers the starting commit, so committed changes are still checked |
-| `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`), and edits to files agy has not opened in this conversation |
+| `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`), edits whose new content has placeholder comments instead of code (`// ... existing code ...`), and edits to files agy has not opened in this conversation |
 | `PostToolUse` | after file writes, `run_command` and read tools (`view_file`, `grep_search`, ...) | syntax probe of the written file; records which files agy has seen |
 | `PreInvocation` | before each model call | first call: repository map and the request for acceptance criteria (guided start); each language's rules the first time a file of that language changes; open syntax errors |
-| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint, tests (with coverage when available), acceptance criteria and, for UI changes, visual QA on all changed files; blocks with the full report until they pass. Then asks for one review turn when needed (see below), optionally after a second opinion from a stronger model |
+| `Stop` | when agy wants to finish | runs syntax, static critic, diff integrity, test-first, typecheck/lint, tests (with coverage when available), acceptance criteria and, for UI changes, visual QA on all changed files; blocks with the full report until they pass. Then asks for one review turn when needed (see below), optionally after a second opinion from a stronger model |
 
 The gate runs the checks itself; it never trusts a "PASS" written by the agent. Run it by hand with `python3 scripts/agy_hook.py check [project]`. The pre-commit hook (`install_git_hooks.py`) runs the same gate without the browser step (`check --no-visual`).
 
@@ -239,6 +240,23 @@ These make a fast model work like a careful one.
 | **Acceptance criteria** | failure / review | At the start agy writes `.agy/criteria.md` (3 to 5 checkable behaviours). At Stop, an unticked criterion fails; a missing file, a file older than the conversation or a criterion ticked without evidence gets a review. `.agy/` is added to `.git/info/exclude`. Off: `"criteria": false` or `AGY_CRITERIA=0`. |
 | **Loop breaker** | report | The same failure twice in a row (numbers ignored) adds a debug protocol: reproduce, read the code path, test hypotheses before editing. At the 4th time (`AGY_LOOP_ESCALATE`) agy must stop and explain to you what fails, what it tried and what it needs; the next stop is allowed. |
 | **Second opinion** | review | Opt-in, see below. |
+
+### Integrity checks
+The shortcuts a fast model takes to look done. Only the lines the change added or removed count (diff against the session's base commit). Off: `"integrity": false` or `AGY_INTEGRITY=0`.
+
+| Finding | Kind | Examples |
+|---|---|---|
+| **Code replaced by a placeholder comment** | block (PreToolUse) + failure | `// ... existing code ...`, `# rest of the code unchanged`, `{/* ... */}`. In a file edit these delete the code they stand for. The PreToolUse guard refuses the edit when the comment was not already in the file. |
+| **Tests disabled or focused** | failure | `it.only`, `fit`, `it.skip`, `xit`, `@pytest.mark.skip`, `@unittest.skip`, `xfail`, `#[ignore]`, `@Disabled` added to a test file |
+| **Debugger statements** | failure | `debugger`, `breakpoint()`, `pdb.set_trace()`, `binding.pry`, `dbg!` |
+| **Invented JS/TS packages** | failure | a bare import that is in no `package.json` (file folder up to the root), not in `node_modules`, not a workspace package, a `tsconfig` path alias, a bundler alias or a Node builtin. Without `node_modules` it is a review. |
+| **Existing tests weakened** | review | fewer assertions in an existing test file, expectations changed (`was` / `now` shown), test files deleted |
+| **Conditional skips** | review | `skipif`, `skipIf`, `pytest.skip()`, `self.skipTest()`, `t.Skip()` |
+| **Unfinished code** | review | `raise NotImplementedError` (not in abstract classes), `throw new Error("not implemented")`, `todo!()`, new `TODO` / `FIXME` comments, "implement this later" |
+| **`console.log` in production code** | review | not in tests, `scripts/`, `bin/`, `cli`, config files |
+| **Python imports that resolve to nothing** | review | not stdlib, not a module of the repository, not in `.venv` / `venv`, not in requirements / pyproject / setup files |
+
+Strings are ignored, so a test fixture that contains `"it.only("` is not a finding. Run the checks alone with `python3 scripts/integrity.py [project] --base <commit>`.
 
 A **review** blocks the stop once with the findings and asks agy to answer them; the next stop on the same content is allowed. Reviews run only when all hard checks pass.
 
@@ -285,6 +303,7 @@ Only you edit this file; the guard blocks the agent from writing it.
   "test_exempt": ["src/generated/*"],
   "test_timeout": 600,
   "critic": true,
+  "integrity": true,
   "read_before_write": true,
   "lint_changed_lines": true,
   "prove_tests": true,
@@ -318,6 +337,7 @@ Without it the gate auto-detects the test command (pytest, vitest/jest, cargo, g
 | `AGY_TEST_TIMEOUT=600` | seconds for each test/typecheck/lint command |
 | `AGY_VISUAL_QA=0` | turn the visual QA step off |
 | `AGY_READ_BEFORE_WRITE=0` | allow edits to files agy has not opened |
+| `AGY_INTEGRITY=0` | turn the integrity checks off (placeholders, disabled tests, debugger, invented imports, ...) |
 | `AGY_COVERAGE=0` | do not instrument the tests for changed-line coverage |
 | `AGY_CRITERIA=0` | do not ask for or check acceptance criteria |
 | `AGY_GUIDED_START=0` | no repository map and criteria request at the start |

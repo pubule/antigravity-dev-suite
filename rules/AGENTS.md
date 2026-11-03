@@ -11,6 +11,7 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
 1. **Stop gate.** When you try to finish, the suite runs these checks on every file you changed (including committed files and new folders):
    - syntax and structure of each changed file;
    - static critic (secrets, empty `except`, mutable defaults, quadratic traps, unsafe patterns);
+   - **integrity of the diff**: placeholder comments instead of code, disabled or focused tests, debugger statements, imports of packages that do not exist;
    - **test-first**: a changed production file needs a new or changed test file;
    - typecheck, and lint on the lines you changed;
    - the project test suite;
@@ -30,6 +31,9 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
 9. **Changed lines need tests.** When coverage is available, the gate lists the changed lines no test runs. Add tests for them, or say why a line cannot be tested.
 10. **When the same failure comes back, stop guessing.** After two identical failures, reproduce, read the code path and test your hypotheses before the next edit. After four, stop and explain the problem to the user: what fails, what you tried, what you need.
 11. **A stronger reviewer may read your diff** (when the project turns it on). Treat its findings like review points: fix the real ones with a test, and say why the others are wrong.
+12. **Write complete code.** Never write `// ... existing code ...` or `# rest unchanged` in a file edit: the file gets exactly what you write, so the code those comments stand for is deleted. The guard refuses such edits. Do not leave `debugger`, `breakpoint()`, `raise NotImplementedError` or new TODOs for work the task needs.
+13. **Do not make tests pass by changing them.** `.only`, `.skip`, `xit`, `@pytest.mark.skip`, `xfail` fail the gate. Removed assertions, changed expected values and deleted test files must be explained. If an old expectation was right, fix the code.
+14. **Import only what exists.** A JS/TS import of a package that is in no `package.json` and not in `node_modules` fails the gate. Check the real package name before you import it; add new dependencies with the package manager.
 
 ---
 
