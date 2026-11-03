@@ -820,12 +820,17 @@ def handle_pre_invocation(payload: Dict[str, Any]) -> Dict[str, Any]:
     ws = workspace_of(payload)
     root = project_root(ws)
     state = load_state(root)
-    # Fallback when SessionStart did not fire: the first model call records the base.
-    if git_root(root) and ensure_session(root, state, payload):
-        save_state(root, state)
+    msgs: List[str] = []
+    if git_root(root):
+        # Fallback when SessionStart did not fire: the first model call records the base.
+        changed = ensure_session(root, state, payload)
+        guide = guidance_messages(root, state, payload)
+        if changed or guide:
+            save_state(root, state)
+        msgs = guide
     diags = state.get("diagnostics", {})
     if not diags:
-        return {}
+        return {"injectSteps": [{"ephemeralMessage": m} for m in msgs]} if msgs else {}
     from validator_core import validate_code_file
     open_issues: List[str] = []
     for path_str in list(diags):
@@ -838,13 +843,69 @@ def handle_pre_invocation(payload: Dict[str, Any]) -> Dict[str, Any]:
             diags.pop(path_str, None)
     state["diagnostics"] = diags
     save_state(root, state)
-    if not open_issues:
-        return {}
-    msg = (
-        "[Antigravity Auto-Debug] Your last edit left syntax errors. Fix them before anything else:\n"
-        + "\n".join(open_issues)
-    )
-    return {"injectSteps": [{"ephemeralMessage": _shorten(msg, 3000)}]}
+    if open_issues:
+        msgs.insert(0, _shorten(
+            "[Antigravity Auto-Debug] Your last edit left syntax errors. Fix them before anything else:\n"
+            + "\n".join(open_issues), 3000))
+    return {"injectSteps": [{"ephemeralMessage": m} for m in msgs]} if msgs else {}
+
+
+def guidance_messages(root: Path, state: Dict[str, Any], payload: Dict[str, Any]) -> List[str]:
+    """Guided start on the first model call, then each language's rules the first time
+    a file of that language changes. Updates the session in `state`."""
+    conv = str(payload.get("conversationId") or "default")
+    sess = (state.get("sessions") or {}).get(conv)
+    if not isinstance(sess, dict):
+        return []
+    cfg = load_project_config(root)
+    msgs: List[str] = []
+    try:
+        from guidance import rules_for, start_message
+        if not sess.get("guided"):
+            sess["guided"] = True
+            if env_flag("AGY_GUIDED_START", True):
+                cfg_start = dict(cfg, criteria=criteria_enabled(cfg))
+                text = start_message(root, cfg_start)
+                if text:
+                    msgs.append(text)
+        if cfg.get("language_rules", True):
+            injected = list(sess.get("rules") or [])
+            for name, text in rules_for(root, changed_files(root, sess.get("base", "")), injected):
+                msgs.append(text)
+                injected.append(name)
+            if injected:
+                sess["rules"] = injected
+    except Exception as err:  # guidance is a help: never break the model call
+        logger.debug("Guidance failed: %s", err)
+    return msgs
+
+
+def criteria_enabled(cfg: Dict[str, Any]) -> bool:
+    return bool(cfg.get("criteria", True)) and env_flag("AGY_CRITERIA", True)
+
+
+def apply_criteria(root: Path, cfg: Dict[str, Any], result: CheckResult, session_start: float) -> None:
+    if not criteria_enabled(cfg):
+        return
+    try:
+        from guidance import check_criteria
+        failures, reviews = check_criteria(root, {"criteria": True}, session_start)
+    except Exception as e:
+        result.notes.append(f"Criteria check skipped: {e}")
+        return
+    result.ran.append("criteria")
+    for title, detail in failures:
+        result.fail(title, detail)
+    result.reviews.extend(reviews)
+
+
+def gate_extra(root: Path, cfg: Dict[str, Any]) -> str:
+    """Everything besides the changed files that changes the gate's verdict."""
+    extra = json.dumps(cfg, sort_keys=True)
+    if criteria_enabled(cfg):
+        from guidance import criteria_fingerprint
+        extra += "\0" + criteria_fingerprint(root)
+    return extra
 
 
 def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -862,13 +923,15 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     state = load_state(root)
     conv = str(payload.get("conversationId") or "default")
-    base = (state.get("sessions", {}).get(conv) or {}).get("base", "")
+    sess = state.get("sessions", {}).get(conv) or {}
+    base = sess.get("base", "")
     files = changed_files(root, base)
     if not any(is_code(f) for f in files):
         return {"decision": "allow"}
 
     cfg = load_project_config(root)
-    fp = fingerprint(root, files, json.dumps(cfg, sort_keys=True))
+    extra = gate_extra(root, cfg)
+    fp = fingerprint(root, files, extra)
     cache = state.get("checks", {})
     cached = cache.get(fp)
     if cached and cached.get("ok"):
@@ -888,6 +951,7 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
         report = cached["report"]
     else:
         result = run_checks(root, files, cfg, base=base)
+        apply_criteria(root, cfg, result, float(sess.get("t") or 0))
         if result.ok and result.reviews:
             # Checks pass, but the UI changed: give agy one turn with the before/after images.
             # The next stop on the same content is allowed.
@@ -901,7 +965,7 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
             cache[fp] = {"ok": True, "t": time.time()}
             # Test runs may touch tracked files (snapshots, lock files): remember both states.
             files_after = changed_files(root, base)
-            cache[fingerprint(root, files_after, json.dumps(cfg, sort_keys=True))] = {"ok": True, "t": time.time()}
+            cache[fingerprint(root, files_after, extra)] = {"ok": True, "t": time.time()}
             state["checks"] = _trim_dict(cache, 20)
             state.pop("gave_up", None)
             reset_loop(state, conv)
@@ -1032,13 +1096,15 @@ def cli_check(target: str, visual: bool = True) -> int:
     print(f"Changed files ({len(files)}): " + (", ".join(files[:20]) or "none"))
     # Compare the UI against HEAD: the work-tree changes are what is being checked.
     result = run_checks(root, files, cfg, visual=visual, base="HEAD")
+    if any(is_code(f) for f in files):
+        apply_criteria(root, cfg, result, 0.0)
     for note in result.notes:
         print(f"Note: {note}")
     if result.ok and result.reviews:
         print(format_review(result))
     print(f"Checks run: {', '.join(result.ran) or 'none'}")
     if result.ok and visual:
-        fp = fingerprint(root, files, json.dumps(cfg, sort_keys=True))
+        fp = fingerprint(root, files, gate_extra(root, cfg))
         cache = state.get("checks", {})
         cache[fp] = {"ok": True, "t": time.time()}
         state["checks"] = _trim_dict(cache, 20)

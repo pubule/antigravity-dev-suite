@@ -59,7 +59,9 @@ class Base(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.home = self.tmp / "home"
         self.home.mkdir()
-        self.env = {"HOME": str(self.home), "USERPROFILE": str(self.home), "GEMINI_HOME": str(self.home / ".gemini")}
+        self.env = {"HOME": str(self.home), "USERPROFILE": str(self.home), "GEMINI_HOME": str(self.home / ".gemini"),
+                    # Acceptance criteria have their own tests (TestGuidance).
+                    "AGY_CRITERIA": "0"}
         for k in ("AGY_STOP_GATE_DISABLE", "AGY_REQUIRE_TESTS", "AGY_PRE_TOOL_GUARD", "AGY_AUTO_DEBUG", "AGY_VISUAL_QA"):
             os.environ.pop(k, None)
         self.repo = self.tmp / "proj"
@@ -610,6 +612,84 @@ class TestLoopBreaker(Base):
         self.assertIn("attempt 2", run_json(["stop"], payload, env)["reason"])
         self.write("app.py", "def f():\n    return [\n")
         self.assertNotIn("Same failure", run_json(["stop"], payload, env)["reason"])
+
+
+class TestGuidance(Base):
+    def pre_invocation(self, **extra):
+        return run_json(["pre-invocation"], dict(self.base, **extra), self.env)
+
+    def messages(self, out):
+        return [s["ephemeralMessage"] for s in out.get("injectSteps", [])]
+
+    def test_guided_start_once_per_conversation(self):
+        self.write("src/billing/invoice.py", "def total_amount(lines):\n    return sum(lines)\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "code")
+        self.env["AGY_CRITERIA"] = "1"
+        msgs = self.messages(self.pre_invocation())
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("Guided Start", msgs[0])
+        self.assertIn(".agy/criteria.md", msgs[0])
+        self.assertIn("invoice.py", msgs[0])  # the repository map
+        self.assertEqual(self.pre_invocation(), {})
+        self.assertIn("Guided Start", self.messages(self.pre_invocation(conversationId="other"))[0])
+        exclude = (self.repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+        self.assertIn(".agy/", exclude)
+        self.write(".agy/criteria.md", "- [ ] x\n")
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.repo), capture_output=True, text=True)
+        self.assertNotIn(".agy", status.stdout)
+
+    def test_language_rules_injected_once_when_files_change(self):
+        self.pre_invocation()
+        self.assertEqual(self.pre_invocation(), {})
+        self.write("app.py", "X = 1\n")
+        msgs = self.messages(self.pre_invocation())
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("[Antigravity Rules: languages/python]", msgs[0])
+        self.assertEqual(self.pre_invocation(), {})
+        self.write("web/app.ts", "export const x = 1;\n")
+        self.write("db/migrations/001_init.sql", "CREATE TABLE t (id int);\n")
+        names = " ".join(self.messages(self.pre_invocation()))
+        self.assertIn("languages/typescript", names)
+        self.assertIn("database/migrations", names)
+        self.assertNotIn("languages/python", names)
+
+    def test_rule_glob_matching(self):
+        from guidance import _matches
+        self.assertTrue(_matches("a.py", "**/*.py"))
+        self.assertTrue(_matches("src/a/b.py", "**/*.py"))
+        self.assertTrue(_matches("app/migrations/0001.py", "**/migrations/**"))
+        self.assertFalse(_matches("app/migration.py", "**/migrations/**"))
+
+    def test_acceptance_criteria_at_stop(self):
+        env = dict(self.env, AGY_CRITERIA="1", AGY_REQUIRE_TESTS="0")
+        payload = dict(self.base, terminationReason="model_stop")
+        run_json(["session-start"], self.base, env)
+        self.write("settings.json", '{"retries": 3}\n')
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("No acceptance criteria", out["reason"])
+        crit = self.write(".agy/criteria.md", "- [x] retries is 3 — evidence: settings.json\n- [ ] errors are logged\n")
+        out = run_json(["stop"], payload, env)
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Acceptance criteria not met", out["reason"])
+        self.assertIn("errors are logged", out["reason"])
+        self.assertNotIn("retries is 3", out["reason"])
+        crit.write_text("- [x] retries is 3 — evidence: settings.json\n- [x] errors are logged\n", encoding="utf-8")
+        out = run_json(["stop"], payload, env)
+        self.assertIn("ticked without evidence", out["reason"])
+        crit.write_text("- [x] retries is 3 — evidence: settings.json\n- [x] errors are logged -> test_log\n", encoding="utf-8")
+        self.assertEqual(run_json(["stop"], payload, env)["decision"], "allow")
+
+    def test_criteria_from_an_earlier_conversation_are_stale(self):
+        env = dict(self.env, AGY_CRITERIA="1", AGY_REQUIRE_TESTS="0")
+        crit = self.write(".agy/criteria.md", "- [x] old task — evidence: done\n")
+        old = time.time() - 3600
+        os.utime(str(crit), (old, old))
+        run_json(["session-start"], self.base, env)
+        self.write("settings.json", '{"retries": 3}\n')
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"), env)
+        self.assertIn("from an earlier task", out["reason"])
 
 
 class TestReadBeforeWrite(Base):
