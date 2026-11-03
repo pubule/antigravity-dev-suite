@@ -46,7 +46,8 @@ CATASTROPHIC_COMMAND_PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
 GATE_BYPASS_PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     (
         "Gate configuration variable (reserved for the user)",
-        re.compile(r"\bAGY_(?:SKIP_PRECOMMIT|STOP_GATE_DISABLE|STOP_GATE_MAX_BLOCKS|PRE_TOOL_GUARD|AUTO_DEBUG|REQUIRE_TESTS)\b")
+        re.compile(r"\bAGY_(?:SKIP_PRECOMMIT|STOP_GATE_DISABLE|STOP_GATE_MAX_BLOCKS|PRE_TOOL_GUARD|AUTO_DEBUG|REQUIRE_TESTS|"
+                   r"INTEGRITY|VISUAL_QA|COVERAGE|CRITERIA|READ_BEFORE_WRITE|LOOP_ESCALATE|TEST_TIMEOUT)\b")
     ),
     (
         "Git hook bypass (--no-verify)",

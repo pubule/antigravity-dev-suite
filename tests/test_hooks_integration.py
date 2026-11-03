@@ -872,6 +872,166 @@ class TestReadBeforeWrite(Base):
         self.assertEqual(run_json(["pre-tool"], other, self.env)["decision"], "allow")
 
 
+class TestIntegrity(Base):
+    """Shortcuts that make a change look done: elided code, disabled tests, stubs, invented imports."""
+
+    def commit_all(self):
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "base")
+
+    def check(self):
+        from integrity import check_integrity
+        files = sorted(p.relative_to(self.repo).as_posix() for p in self.repo.rglob("*")
+                       if p.is_file() and ".git" not in p.parts)
+        fails, reviews = check_integrity(self.repo, "HEAD", files)
+        return dict(fails), dict(reviews)
+
+    def test_elision_detection(self):
+        from integrity import is_elision
+        for line in ["// ... existing code ...", "    # ... rest of the code unchanged", "{/* ... */}",
+                     "// rest of the file remains the same", "/* existing code */", "// ... altri metodi"]:
+            self.assertTrue(is_elision(line), line)
+        for line in ["// handle a, b, and more...", "# compute the rest of the payment", "x = 1  # ...",
+                     "// existing users are migrated below", "// Loading..."]:
+            self.assertFalse(is_elision(line), line)
+
+    def test_elided_code_in_the_diff_fails(self):
+        self.write("src/app.ts", "export function a() { return 1 }\nexport function b() { return 2 }\n")
+        self.commit_all()
+        self.write("src/app.ts", "export function a() { return 3 }\n// ... existing code ...\n")
+        fails, _ = self.check()
+        self.assertIn("Code replaced by a placeholder comment", fails)
+        self.assertIn("src/app.ts:2", fails["Code replaced by a placeholder comment"])
+
+    def test_pre_tool_denies_elided_edit_but_not_existing_comment(self):
+        f = self.write("src/app.py", "def a():\n    return 1\n")
+        args = {"TargetFile": str(f), "TargetContent": "return 1",
+                "ReplacementContent": "return 2\n# ... rest of the code unchanged"}
+        payload = dict(self.base, toolCall={"name": "replace_file_content", "args": args})
+        out = run_json(["pre-tool"], payload, self.env)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("DELETE", out["reason"])
+        f.write_text("def a():\n    return 1\n# ... rest of the code unchanged\n", encoding="utf-8")
+        self.assertEqual(run_json(["pre-tool"], payload, self.env)["decision"], "allow")
+        multi = dict(self.base, toolCall={"name": "multi_replace_file_content", "args": {
+            "TargetFile": str(f), "ReplacementChunks": [{"TargetContent": "x", "ReplacementContent": "// ..."}]}})
+        self.assertEqual(run_json(["pre-tool"], multi, self.env)["decision"], "deny")
+
+    def test_disabled_and_focused_tests_fail(self):
+        self.write("tests/test_a.py", "def test_a():\n    assert 1\n")
+        self.write("src/a.test.ts", "it('a', () => { expect(1).toBe(1) })\n")
+        self.commit_all()
+        self.write("tests/test_a.py", "import pytest\n\n@pytest.mark.skip\ndef test_a():\n    assert 1\n")
+        self.write("src/a.test.ts", "it.only('a', () => { expect(1).toBe(1) })\n")
+        fails, _ = self.check()
+        detail = fails["Tests disabled or focused"]
+        self.assertIn("tests/test_a.py:3", detail)
+        self.assertIn("focused test", detail)
+
+    def test_conditional_skip_is_only_a_review(self):
+        self.write("tests/test_a.py", "import sys, pytest\n\n@pytest.mark.skipif(sys.platform == 'win32', "
+                   "reason='posix')\ndef test_a():\n    assert 1\n")
+        fails, reviews = self.check()
+        self.assertNotIn("Tests disabled or focused", fails)
+        self.assertIn("Conditional skips added to tests", reviews)
+
+    def test_skip_call_in_test_body(self):
+        self.write("tests/test_a.py", "import sys, pytest\n\ndef test_a():\n    pytest.skip('later')\n    assert 1\n\n"
+                   "def test_b():\n    if sys.platform == 'win32':\n        pytest.skip('posix only')\n    assert 1\n\n"
+                   "def test_c():\n    try:\n        import yaml\n    except ImportError:\n"
+                   "        pytest.skip('no yaml')\n")
+        fails, _ = self.check()
+        detail = fails["Tests disabled or focused"]
+        self.assertIn("tests/test_a.py:4: unconditional skip", detail)
+        self.assertNotIn(":9:", detail)
+        self.assertNotIn(":16:", detail)
+
+    def test_weakened_assertions_need_review(self):
+        self.write("tests/test_a.py", "def test_a():\n    assert add(2, 2) == 4\n    assert add(0, 0) == 0\n")
+        self.commit_all()
+        self.write("tests/test_a.py", "def test_a():\n    assert add(2, 2) == 5\n")
+        _, reviews = self.check()
+        detail = reviews["Existing tests weakened"]
+        self.assertIn("1 fewer assertion", detail)
+        self.assertIn("was: assert add(2, 2) == 4", detail)
+        self.assertIn("now: assert add(2, 2) == 5", detail)
+
+    def test_deleted_test_file_needs_review(self):
+        self.write("tests/test_gone.py", "def test_x():\n    assert 1\n")
+        self.commit_all()
+        (self.repo / "tests" / "test_gone.py").unlink()
+        self.write("src/x.py", "X = 1\n")
+        _, reviews = self.check()
+        self.assertIn("tests/test_gone.py: test file deleted", reviews["Existing tests weakened"])
+
+    def test_stubs_debugger_and_console_log(self):
+        self.write("src/svc.py", "class A:\n    def run(self):\n        raise NotImplementedError\n"
+                   "    # TODO: handle errors\n")
+        self.write("src/abc_base.py", "from abc import abstractmethod\n\nclass B:\n    @abstractmethod\n"
+                   "    def run(self):\n        raise NotImplementedError\n")
+        self.write("src/ui.ts", "export function f() {\n  console.log('x')\n  debugger;\n  return 1\n}\n")
+        self.write("scripts/tool.js", "console.log('cli output')\n")
+        fails, reviews = self.check()
+        self.assertIn("src/ui.ts:3", fails["Debugger statements left in the code"])
+        stubs = reviews["Unfinished code: stubs and TODOs"]
+        self.assertIn("src/svc.py:3", stubs)
+        self.assertIn("src/svc.py:4", stubs)
+        self.assertNotIn("abc_base.py", stubs)
+        console = reviews["console.log left in production code"]
+        self.assertIn("src/ui.ts:2", console)
+        self.assertNotIn("scripts/tool.js", console)
+
+    def test_invented_js_package_fails_when_node_modules_exists(self):
+        self.write("package.json", json.dumps({"dependencies": {"react": "18.3.1"}}))
+        self.write("node_modules/react/package.json", "{}")
+        self.write("node_modules/lodash/package.json", "{}")  # transitive dependency, installed
+        self.write("tsconfig.json", '{ // comment\n "compilerOptions": {"paths": {"@app/*": ["src/*"]}}}')
+        self.write("src/App.tsx", "import React from 'react'\nimport { x } from 'react-super-hooks'\n"
+                   "import fs from 'node:fs'\nimport path from 'path'\nimport y from '@app/y'\n"
+                   "import z from './z'\nimport _ from 'lodash'\nimport {\n  a,\n} from '@acme/ui-kit/button'\n")
+        fails, _ = self.check()
+        detail = fails["Imports of packages that are not installed or declared"]
+        self.assertIn("'react-super-hooks'", detail)
+        self.assertIn("'@acme/ui-kit'", detail)
+        for ok in ("'react'", "'path'", "'node:fs'", "'@app", "'lodash'", "'./z'"):
+            self.assertNotIn(ok, detail)
+
+    def test_undeclared_js_package_without_node_modules_is_a_review(self):
+        self.write("package.json", json.dumps({"dependencies": {}}))
+        self.write("src/a.js", "const x = require('left-padder')\n")
+        fails, reviews = self.check()
+        self.assertNotIn("Imports of packages that are not installed or declared", fails)
+        self.assertIn("'left-padder'", reviews["Imports of packages not declared in package.json"])
+
+    def test_python_imports(self):
+        self.write("requirements.txt", "PyYAML==6.0\nrequests>=2\n")
+        self.write("src/pkg/__init__.py", "")
+        self.write("src/pkg/helpers.py", "H = 1\n")
+        self.write("src/main.py", "import os, json\nimport yaml\nimport requests.adapters\n"
+                   "from pkg.helpers import H\nfrom . import sibling\nimport totally_made_up_lib\n"
+                   "try:\n    import ujson_fast_xyz\nexcept ImportError:\n    ujson_fast_xyz = None\n")
+        _, reviews = self.check()
+        detail = reviews["Python imports that resolve to nothing"]
+        self.assertIn("'totally_made_up_lib'", detail)
+        for ok in ("'os'", "'yaml'", "'requests'", "'pkg'", "'ujson_fast_xyz'"):
+            self.assertNotIn(ok, detail)
+
+    def test_stop_gate_blocks_on_disabled_test(self):
+        self.write("tests/test_a.py", "def test_a():\n    assert 1\n")
+        self.commit_all()
+        run_json(["session-start"], self.base, self.env)
+        self.write("tests/test_a.py", "import pytest\n\n@pytest.mark.skip(reason='flaky')\ndef test_a():\n"
+                   "    assert 1\n")
+        out = run_json(["stop"], dict(self.base, terminationReason="model_stop"),
+                       dict(self.env, AGY_REQUIRE_TESTS="0"))
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Tests disabled or focused", out["reason"])
+
+    def test_agent_cannot_turn_integrity_off(self):
+        payload = dict(self.base, toolCall={"name": "run_command", "args": {"CommandLine": "AGY_INTEGRITY=0 pytest"}})
+        self.assertEqual(run_json(["pre-tool"], payload, self.env)["decision"], "deny")
+
+
 class TestDoctor(Base):
     def test_doctor_end_to_end(self):
         env = dict(os.environ, **self.env)

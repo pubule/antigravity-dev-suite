@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.22.0] — 2026-11-03
+
+### 🧱 Integrity of the diff
+The gate already checks that the code works. Now it also checks the shortcuts a fast model takes to look done: code it did not write out, tests it switched off, debug leftovers and packages it invented. Only the lines the change added or removed count. New module `scripts/integrity.py`; config `"integrity"`, env `AGY_INTEGRITY` (reserved for the user: the guard now blocks every gate variable, including `AGY_VISUAL_QA`, `AGY_COVERAGE`, `AGY_CRITERIA`, `AGY_READ_BEFORE_WRITE`, `AGY_LOOP_ESCALATE` and `AGY_TEST_TIMEOUT`).
+
+- **Placeholder comments instead of code** (PreToolUse block + failure). `// ... existing code ...`, `# rest of the code unchanged`, `{/* ... */}` and similar (English and Italian) delete the code they stand for. The guard refuses `write_to_file`, `replace_file_content` and `multi_replace_file_content` when the new content has such a comment that was not already in the file or the replaced text. The Stop gate fails on any that reach the diff.
+- **Disabled or focused tests** (failure): `.only`, `fit`, `.skip`, `xit`, `@pytest.mark.skip`, `@unittest.skip`, `xfail`, `expectedFailure`, `#[ignore]`, `@Disabled`, `@Ignore`. Conditional skips are a review.
+- **Debugger statements** (failure): `debugger`, `breakpoint()`, `pdb` / `ipdb`, `binding.pry`, `dbg!`.
+- **Invented JS/TS packages** (failure when `node_modules` exists, review otherwise). Declared dependencies of every `package.json` from the file's folder to the root, workspace package names, `tsconfig`/`jsconfig` `paths` and `baseUrl`, bundler config aliases and Node builtins are accepted.
+- **Weakened tests** (review): fewer assertions in an existing test file, changed expectations shown as was/now, deleted test files.
+- **Unfinished code** (review): `NotImplementedError` outside abstract classes, `throw new Error("not implemented")`, `todo!()`, new TODO/FIXME comments. **`console.log`** in production code (review).
+- **Python imports that resolve to nothing** (review): not stdlib, not a repository module, not installed in `.venv`/`venv`, not declared in requirements/pyproject/setup files (common import/distribution name mismatches such as `yaml`/`PyYAML` are known).
+- String literals are ignored by the test, stub and debugger patterns, so fixtures and regexes do not trigger findings.
+- `rules/AGENTS.md`: three new enforced rules (complete code, do not change tests to pass, import only what exists).
+
+---
+
 ## [1.21.0] — 2026-11-03
 
 ### 🧠 Plan, prove, ask for help

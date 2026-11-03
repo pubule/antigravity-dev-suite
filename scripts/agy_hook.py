@@ -431,6 +431,20 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
         except Exception as e:
             result.fail("Static critic crashed", f"{e}\n{traceback.format_exc(limit=3)}")
 
+    # 2b. Integrity of the diff: elided code, disabled tests, debugger statements,
+    # invented imports (failures); stubs, weakened tests, console.log (reviews).
+    if cfg.get("integrity", True) and env_flag("AGY_INTEGRITY", True):
+        try:
+            from integrity import check_integrity
+            failures, reviews = check_integrity(root, base or "HEAD", code_files)
+            result.ran.append("integrity")
+            for title, detail in failures:
+                result.fail(title, detail)
+            if visual:  # reviews need a turn of the agent; the pre-commit mode only blocks
+                result.reviews.extend((t, _shorten(d)) for t, d in reviews)
+        except Exception as e:
+            result.fail("Integrity check crashed", f"{e}\n{traceback.format_exc(limit=3)}")
+
     # 3. Test-first: production code changes need test changes.
     require_tests = cfg.get("require_tests", True) and env_flag("AGY_REQUIRE_TESTS", True)
     exempt = DEFAULT_TEST_EXEMPT + [p for p in cfg.get("test_exempt", []) if isinstance(p, str)]
@@ -731,6 +745,14 @@ def handle_pre_tool(payload: Dict[str, Any]) -> Dict[str, Any]:
     allowed, reason = inspect_tool_call(name, args if isinstance(args, dict) else {})
     if not allowed:
         return {"decision": "deny", "reason": f"[Antigravity Pre-Tool Guard] {reason}"}
+    elided = elided_lines_in_edit(payload, name, args if isinstance(args, dict) else {})
+    if elided:
+        return {"decision": "deny", "reason": (
+            "[Antigravity Pre-Tool Guard] Your new content contains placeholder comments instead of code:\n"
+            + "\n".join(f"  {line}" for line in elided[:5])
+            + "\nThe file gets exactly what you write, so this edit would DELETE the code those comments "
+            "stand for. Write the complete code, or use replace_file_content on a smaller TargetContent "
+            "that covers only the lines you change.")}
     unread = unread_edit_target(payload, name)
     if unread:
         return {"decision": "deny", "reason": (
@@ -738,6 +760,33 @@ def handle_pre_tool(payload: Dict[str, Any]) -> Dict[str, Any]:
             "conversation. Read the file first (view_file), at least the part you change and its callers. "
             "Then make the edit again.")}
     return {"decision": "allow"}
+
+
+def elided_lines_in_edit(payload: Dict[str, Any], name: str, args: Dict[str, Any]) -> List[str]:
+    """Placeholder comments ("// ... existing code ...") in the new content of a file edit
+    that were not already in the file or in the replaced text."""
+    if name not in FILE_WRITE_TOOLS or not env_flag("AGY_INTEGRITY", True):
+        return []
+    try:
+        from integrity import is_elision
+    except Exception:
+        return []
+    chunks: List[Tuple[str, str]] = []
+    if isinstance(args.get("CodeContent"), str):
+        chunks.append((args["CodeContent"], ""))
+    if isinstance(args.get("ReplacementContent"), str):
+        chunks.append((args["ReplacementContent"], str(args.get("TargetContent") or "")))
+    for ch in args.get("ReplacementChunks") or []:
+        if isinstance(ch, dict) and isinstance(ch.get("ReplacementContent"), str):
+            chunks.append((ch["ReplacementContent"], str(ch.get("TargetContent") or "")))
+    path = _target_file(payload)
+    existing = _read(path) if path is not None and path.is_file() else ""
+    found: List[str] = []
+    for new, old in chunks:
+        for line in new.splitlines():
+            if is_elision(line) and line.strip() not in old and line.strip() not in existing:
+                found.append(line.strip())
+    return found
 
 
 # ------------------------------------------------------------ read before write
