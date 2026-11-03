@@ -207,3 +207,126 @@ def diff_hygiene(root: Path, base: str, files: List[str]) -> List[str]:
     from diff_guard import audit_diff_guard
     report = audit_diff_guard(root, specific_files=[root / f for f in files], base_ref=base or "HEAD")
     return [str(v) for v in report.get("violations", [])]
+
+
+# ------------------------------------------------------------ changed-line coverage
+# The test run is instrumented when the project's runner supports it, and the gate
+# reports the changed production lines that no test executed. A missing coverage
+# plugin is never the agent's fault: the plain command runs instead.
+
+COVERAGE_MISSING_RE = re.compile(
+    r"unrecognized arguments: --cov|no such option: --cov|Failed to load (?:custom )?coverage provider|"
+    r"Cannot find (?:dependency|package|module) ['\"]?@vitest/coverage|MISSING DEPENDENCY.*coverage|"
+    r"Unknown option [\"']?--?coverage",
+    re.IGNORECASE,
+)
+
+
+def _js_runner(root: Path, cmd: str) -> str:
+    low = cmd.lower()
+    for name in ("vitest", "jest"):
+        if re.search(rf"\b{name}\b", low):
+            return name
+    if re.search(r"\b(npm|pnpm|yarn)\b.*\btest\b", low):
+        try:
+            import json
+            pkg = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            script = str((pkg.get("scripts") or {}).get("test", "")).lower()
+        except (OSError, ValueError, AttributeError):
+            return ""
+        for name in ("vitest", "jest"):
+            if re.search(rf"\b{name}\b", script):
+                return f"npm-{name}"
+    return ""
+
+
+def coverage_command(root: Path, test_cmd: str, out_dir: Path) -> Optional[Tuple[str, str, Path]]:
+    """(instrumented command, report kind, report path), or None when the runner is unknown."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if re.search(r"(^|\s|/)(pytest|py\.test)(\s|$)|-m\s+pytest", test_cmd.lower()):
+        report = out_dir / "coverage.json"
+        return (f"{test_cmd} --cov=. --cov-report=json:{_quote(str(report))}", "coverage.py", report)
+    runner = _js_runner(root, test_cmd)
+    report = out_dir / "coverage-final.json"
+    d = _quote(str(out_dir))
+    if runner.endswith("vitest"):
+        flags = f"--coverage.enabled=true --coverage.reporter=json --coverage.reportsDirectory={d}"
+    elif runner.endswith("jest"):
+        flags = f"--coverage --coverageReporters=json --coverageDirectory={d}"
+    else:
+        return None
+    sep = " -- " if runner.startswith("npm-") else " "
+    return (test_cmd + sep + flags, "istanbul", report)
+
+
+def coverage_plugin_missing(output: str) -> bool:
+    return bool(COVERAGE_MISSING_RE.search(output))
+
+
+def _rel(root: Path, name: str) -> str:
+    p = Path(name)
+    try:
+        return (p if p.is_absolute() else root / p).resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        return ""
+
+
+def executed_lines(root: Path, kind: str, report: Path) -> Dict[str, Tuple[Set[int], Set[int]]]:
+    """rel path -> (executed lines, executable lines never run)."""
+    import json
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out: Dict[str, Tuple[Set[int], Set[int]]] = {}
+    if kind == "coverage.py":
+        for name, info in (data.get("files") or {}).items():
+            rel = _rel(root, name)
+            if rel and isinstance(info, dict):
+                out[rel] = (set(info.get("executed_lines") or []), set(info.get("missing_lines") or []))
+        return out
+    for name, info in data.items():
+        rel = _rel(root, (info or {}).get("path") or name) if isinstance(info, dict) else ""
+        if not rel:
+            continue
+        hit: Set[int] = set()
+        miss: Set[int] = set()
+        smap = info.get("statementMap") or {}
+        for sid, count in (info.get("s") or {}).items():
+            loc = (smap.get(sid) or {}).get("start") or {}
+            if "line" in loc:
+                (hit if count else miss).add(int(loc["line"]))
+        out[rel] = (hit, miss - hit)
+    return out
+
+
+def _ranges(lines: List[int]) -> str:
+    parts: List[str] = []
+    start = prev = None
+    for n in lines + [None]:  # type: ignore[list-item]
+        if n is not None and prev is not None and n == prev + 1:
+            prev = n
+            continue
+        if start is not None:
+            parts.append(str(start) if start == prev else f"{start}-{prev}")
+        start = prev = n
+    return ", ".join(parts)
+
+
+def uncovered_changed_lines(root: Path, base: str, prod: List[str], kind: str, report: Path) -> List[str]:
+    """One line per production file whose changed lines no test executed."""
+    cov = executed_lines(root, kind, report)
+    if not cov:
+        return []
+    findings: List[str] = []
+    for rel in prod:
+        if rel not in cov:
+            if kind == "coverage.py" and rel.endswith(".py"):
+                findings.append(f"{rel}: no test imports this file")
+            continue
+        _, missing = cov[rel]
+        changed = changed_lines(root, base, rel)
+        lines = sorted(missing if changed is None else (missing & changed))
+        if lines:
+            findings.append(f"{rel}: lines {_ranges(lines)}")
+    return findings

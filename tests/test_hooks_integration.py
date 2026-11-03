@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -549,6 +550,43 @@ class TestDiscipline(Base):
         self.assertEqual(out["decision"], "continue")
         self.assertIn("pytest collected no tests", out["reason"])
         self.assertIn("tests/ops_checks.py", out["reason"])
+
+    def test_changed_lines_without_test_coverage_need_review(self):
+        helptext = subprocess.run(["pytest", "--help"], capture_output=True, text=True).stdout \
+            if shutil.which("pytest") else ""
+        if "--cov" not in helptext:
+            self.skipTest("the pytest on PATH has no pytest-cov")
+        self.calc("def add(a: int, b: int) -> int:\n    return a - b\n")
+        self.commit_all("cov")
+        self.calc(
+            "def add(a: int, b: int) -> int:\n    return a + b\n\n\n"
+            "def clamp(x: int) -> int:\n    if x < 0:\n        return 0\n    return x\n"
+        )
+        self.write("tests/test_ops.py", self.TEST)
+        out = self.stop()
+        self.assertEqual(out["decision"], "continue")
+        self.assertIn("Changed lines that no test runs", out["reason"])
+        self.assertIn("src/calc/ops.py: lines 6-8", out["reason"])
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_coverage_helpers(self):
+        from discipline import coverage_command, coverage_plugin_missing, executed_lines
+        self.assertTrue(coverage_plugin_missing("pytest: error: unrecognized arguments: --cov=."))
+        self.assertTrue(coverage_plugin_missing("MISSING DEPENDENCY  Cannot find dependency '@vitest/coverage-v8'"))
+        self.assertFalse(coverage_plugin_missing("1 failed, 3 passed"))
+        out = self.tmp / "cov"
+        self.assertIn("--cov=.", coverage_command(self.repo, "uv run pytest -q", out)[0])
+        self.assertIsNone(coverage_command(self.repo, "cargo test", out))
+        self.write("package.json", json.dumps({"scripts": {"test": "vitest run"}}))
+        cmd, kind, _ = coverage_command(self.repo, "npm test", out)
+        self.assertIn("npm test -- --coverage.enabled=true", cmd)
+        self.assertEqual(kind, "istanbul")
+        report = self.tmp / "coverage-final.json"
+        report.write_text(json.dumps({str(self.repo / "src" / "a.ts"): {
+            "path": str(self.repo / "src" / "a.ts"),
+            "statementMap": {"0": {"start": {"line": 1}}, "1": {"start": {"line": 4}}},
+            "s": {"0": 3, "1": 0}}}), encoding="utf-8")
+        self.assertEqual(executed_lines(self.repo, "istanbul", report), {"src/a.ts": ({1}, {4})})
 
     def test_changed_lines(self):
         from discipline import changed_lines

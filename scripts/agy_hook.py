@@ -326,11 +326,12 @@ def _shorten(text: str, limit: int = MAX_SECTION_CHARS) -> str:
     return f"{head}\n[... {len(text) - limit} characters cut ...]\n{tail}"
 
 
-def run_shell(cmd: str, cwd: Path, timeout: int) -> Tuple[int, str]:
+def run_shell(cmd: str, cwd: Path, timeout: int, env: Optional[Dict[str, str]] = None) -> Tuple[int, str]:
     try:
         res = subprocess.run(
             cmd, shell=True, cwd=str(cwd), capture_output=True, text=True,  # nosec: user-configured command
             timeout=timeout, check=False, encoding="utf-8", errors="replace",
+            env=dict(os.environ, **env) if env else None,
         )
         out = (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
         return res.returncode, out
@@ -383,6 +384,7 @@ class CheckResult:
         self.reviews: List[Tuple[str, str]] = []  # agy must look once; they do not fail the gate
         self.notes: List[str] = []
         self.ran: List[str] = []
+        self.coverage: Optional[Tuple[str, Path]] = None  # (report kind, report path)
 
     @property
     def ok(self) -> bool:
@@ -457,7 +459,10 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
         cmd = cmds.get(key)
         if not cmd:
             continue
-        code, out = run_shell(cmd, root, timeout)
+        if key == "test" and visual and prod and cfg.get("coverage", True) and env_flag("AGY_COVERAGE", True):
+            code, out = run_tests_with_coverage(root, cmd, timeout, result)
+        else:
+            code, out = run_shell(cmd, root, timeout)
         result.ran.append(key)
         if key == "test" and code == 5 and PYTEST_RE.search(cmd):
             _no_tests_collected(cmd, tests, result)
@@ -490,6 +495,34 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
     return result
 
 
+def run_tests_with_coverage(root: Path, cmd: str, timeout: int, result: CheckResult) -> Tuple[int, str]:
+    """Run the tests instrumented for coverage when the runner supports it; otherwise,
+    or when the coverage plugin is missing, run the plain command."""
+    try:
+        from discipline import coverage_command, coverage_plugin_missing
+        spec = coverage_command(root, cmd, state_dir(root) / "coverage")
+    except Exception as err:
+        logger.debug("Coverage setup failed: %s", err)
+        spec = None
+    if spec is None:
+        return run_shell(cmd, root, timeout)
+    cov_cmd, kind, report = spec
+    try:
+        report.unlink()
+    except OSError:
+        pass
+    # Keep coverage's data file out of the work tree, or it would count as a change.
+    code, out = run_shell(cov_cmd, root, timeout, env={"COVERAGE_FILE": str(report.parent / ".coverage")})
+    if code != 0 and coverage_plugin_missing(out):
+        result.notes.append(
+            "Coverage plugin not installed: changed-line coverage skipped "
+            "(pytest-cov for pytest, @vitest/coverage-v8 for vitest).")
+        return run_shell(cmd, root, timeout)
+    if report.is_file():
+        result.coverage = (kind, report)
+    return code, out
+
+
 PYTEST_RE = re.compile(r"(^|\s|/)(pytest|py\.test)(\s|$)|-m\s+pytest", re.IGNORECASE)
 
 
@@ -518,6 +551,26 @@ def run_reviews(root: Path, code_files: List[str], prod: List[str], tests: List[
         _review_diff(root, code_files, result, base)
     if cfg.get("prove_tests", True) and prod and tests and test_cmd:
         _review_tests(root, tests, test_cmd, result, base, timeout)
+    if result.coverage and prod:
+        _review_coverage(root, prod, result, base)
+
+
+def _review_coverage(root: Path, prod: List[str], result: CheckResult, base: str) -> None:
+    try:
+        from discipline import uncovered_changed_lines
+        kind, report = result.coverage  # type: ignore[misc]
+        findings = uncovered_changed_lines(root, base, prod, kind, report)
+    except Exception as e:
+        result.notes.append(f"Coverage review skipped: {e}")
+        return
+    result.ran.append("coverage")
+    if findings:
+        result.reviews.append((
+            "Changed lines that no test runs",
+            "\n".join(f"- {f}" for f in findings[:20]) +
+            "\nAdd tests that execute these lines (error paths and branches too). If a line cannot be "
+            "tested sensibly, say which one and why in your answer.",
+        ))
 
 
 def _review_api(root: Path, code_files: List[str], result: CheckResult, base: str) -> None:
