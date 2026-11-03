@@ -510,9 +510,9 @@ def run_tests_with_coverage(root: Path, cmd: str, timeout: int, result: CheckRes
         return run_shell(cmd, root, timeout)
     cov_cmd, kind, report = spec
     try:
-        report.unlink()
-    except OSError:
-        pass
+        report.unlink(missing_ok=True)
+    except OSError as err:
+        logger.debug("Failed unlinking coverage report: %s", err)
     # Keep coverage's data file out of the work tree, or it would count as a change.
     code, out = run_shell(cov_cmd, root, timeout, env={"COVERAGE_FILE": str(report.parent / ".coverage")})
     if code != 0 and coverage_plugin_missing(out):

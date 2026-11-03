@@ -63,6 +63,17 @@ class Base(unittest.TestCase):
         self.env = {"HOME": str(self.home), "USERPROFILE": str(self.home), "GEMINI_HOME": str(self.home / ".gemini"),
                     # Acceptance criteria have their own tests (TestGuidance).
                     "AGY_CRITERIA": "0"}
+        if "PLAYWRIGHT_BROWSERS_PATH" in os.environ:
+            self.env["PLAYWRIGHT_BROWSERS_PATH"] = os.environ["PLAYWRIGHT_BROWSERS_PATH"]
+        else:
+            for cand in [
+                Path.home() / "Library" / "Caches" / "ms-playwright",
+                Path.home() / ".cache" / "ms-playwright",
+                Path.home() / "AppData" / "Local" / "ms-playwright",
+            ]:
+                if cand.is_dir():
+                    self.env["PLAYWRIGHT_BROWSERS_PATH"] = str(cand)
+                    break
         for k in ("AGY_STOP_GATE_DISABLE", "AGY_REQUIRE_TESTS", "AGY_PRE_TOOL_GUARD", "AGY_AUTO_DEBUG", "AGY_VISUAL_QA"):
             os.environ.pop(k, None)
         self.repo = self.tmp / "proj"

@@ -12,10 +12,13 @@ Python 3.9+ standard library only. Works on macOS, Linux and Windows.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("gate_stats")
 
 LOG_NAME = "gate-log.jsonl"
 MAX_LOG_BYTES = 2_000_000
@@ -30,8 +33,8 @@ def append(state_dir: Path, entry: Dict[str, Any]) -> None:
         if f.stat().st_size > MAX_LOG_BYTES:
             lines = f.read_text(encoding="utf-8", errors="replace").splitlines()[-KEEP_LINES:]
             f.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except OSError:
-        pass  # statistics must never break the gate
+    except OSError as err:
+        logger.debug("Failed appending gate stats: %s", err)
 
 
 def read(state_dir: Path, since: float = 0.0) -> List[Dict[str, Any]]:
@@ -45,8 +48,8 @@ def read(state_dir: Path, since: float = 0.0) -> List[Dict[str, Any]]:
                     continue
                 if isinstance(e, dict) and float(e.get("t", 0)) >= since:
                     out.append(e)
-    except OSError:
-        pass
+    except OSError as err:
+        logger.debug("Failed reading gate stats: %s", err)
     return out
 
 
