@@ -26,6 +26,10 @@ These rules are enforced by hooks. You cannot finish a task while they fail.
 5. **Report only verified results.** Quote the real command output. Never write "tests pass" without output that shows it.
 6. **Syntax errors come back immediately.** After a bad edit, the next turn starts with the error. Fix it first.
 7. **Read before you edit.** The guard refuses an edit to a file you have not opened in this conversation. Open it with `view_file` first.
+8. **Acceptance criteria.** Before you change code, write `.agy/criteria.md` with 3 to 5 checkable behaviours (`- [ ] <behaviour> (proved by <test>)`). Before you finish, tick each one with its evidence (`- [x] <behaviour> — evidence: <test, output, screenshot>`). The gate fails while a criterion is unticked.
+9. **Changed lines need tests.** When coverage is available, the gate lists the changed lines no test runs. Add tests for them, or say why a line cannot be tested.
+10. **When the same failure comes back, stop guessing.** After two identical failures, reproduce, read the code path and test your hypotheses before the next edit. After four, stop and explain the problem to the user: what fails, what you tried, what you need.
+11. **A stronger reviewer may read your diff** (when the project turns it on). Treat its findings like review points: fix the real ones with a test, and say why the others are wrong.
 
 ---
 

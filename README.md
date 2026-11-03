@@ -1,4 +1,4 @@
-# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.20.0)
+# 🚀 Antigravity Dev Suite (Claude Opus 5.5 + ASD-STE100 v1.21.0)
 
 **Enterprise-Grade, 100% Cross-Platform Development & Cognitive Reasoning Suite for Google Antigravity (AGY)**.  
 Combines the best engineering patterns from **`mega-mind`**, **`ECC (Everything Claude Code)`**, **`superpowers`**, the **Claude Opus 5.5 Standard**, and **ASD-STE100 (Simplified Technical English)**. Calibrated for maximum efficiency with **Gemini Flash 3.8 and model inheritance** across **macOS (Intel & Apple Silicon), Linux, and Windows 10/11**.
@@ -93,7 +93,7 @@ The suite operates across all major operating systems without native compilation
 
 ```text
 antigravity-dev-suite/
-├── plugin.json                 # Standard AGY plugin manifest (v1.20.0)
+├── plugin.json                 # Standard AGY plugin manifest (v1.21.0)
 ├── mcp_config.json             # Root Playwright MCP server definition
 ├── agents/                     # Subagent personas (Native Markdown, model: inherit)
 │   ├── opus-architect.md       # System design, ADR persistence & scalability architect
@@ -124,7 +124,10 @@ antigravity-dev-suite/
 │   ├── api_contract_guard.py   # Automated public API contract drift detector (Python, TS, Go, Rust)
 │   ├── repo_map.py             # Token-budgeted repository symbol mapper with persistent mtime cache
 │   ├── handoff.py              # Standalone session handoff generator with secret redaction
-│   ├── agy_hook.py             # Single entry point for all hooks + verification gate (check, doctor)
+│   ├── agy_hook.py             # Single entry point for all hooks + verification gate (check, doctor, stats)
+│   ├── guidance.py             # Guided start: repo map, acceptance criteria, language rules on demand
+│   ├── second_opinion.py       # Optional diff review by a stronger model (Anthropic or Gemini API)
+│   ├── gate_stats.py           # Stop gate verdict log and statistics
 │   ├── setup_hooks.py          # Registers hooks in ~/.gemini/config/hooks.json (install/update/uninstall)
 │   ├── stop_gate.py            # Compatibility wrapper around the agy_hook.py Stop gate
 │   ├── diff_guard.py           # AST diff hygiene & cognitive complexity analyzer
@@ -133,7 +136,7 @@ antigravity-dev-suite/
 │   ├── install_git_hooks.py    # Native cross-platform pre-commit Git hook installer
 │   ├── pre_tool_guard.py       # PreToolUse safety guardrail (Blocks catastrophic commands & leaks)
 │   ├── critic_loop.py          # Critic loop orchestrator CLI (Opus 5.5 Standard)
-│   ├── discipline.py           # Stop gate discipline: tests fail on base commit, changed-line lint, API & diff review
+│   ├── discipline.py           # Stop gate discipline: tests fail on base commit, changed-line lint and coverage, API & diff review
 │   ├── base_worktree.py        # Temporary checkout of the base commit (node_modules/venv linked)
 │   ├── visual_gate.py          # Stop gate visual step: dev server, page selection, blocking report
 │   └── visual_qa.py            # Playwright dual-viewport screenshot engine with WCAG 2.1 AA a11y audit
@@ -217,8 +220,8 @@ powershell -ExecutionPolicy Bypass -File .\update.ps1   # Windows
 | `SessionStart` | new conversation | remembers the starting commit, so committed changes are still checked |
 | `PreToolUse` | before `run_command` and file writes | blocks catastrophic commands, secrets, gate bypasses (`--no-verify`, `AGY_*` flags, state files, `.agents/agy.json`), and edits to files agy has not opened in this conversation |
 | `PostToolUse` | after file writes, `run_command` and read tools (`view_file`, `grep_search`, ...) | syntax probe of the written file; records which files agy has seen |
-| `PreInvocation` | before each model call | feeds open syntax errors back to the model |
-| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint, tests and, for UI changes, visual QA on all changed files; blocks with the full report until they pass. Then asks for one review turn when needed (see below) |
+| `PreInvocation` | before each model call | first call: repository map and the request for acceptance criteria (guided start); each language's rules the first time a file of that language changes; open syntax errors |
+| `Stop` | when agy wants to finish | runs syntax, static critic, test-first, typecheck/lint, tests (with coverage when available), acceptance criteria and, for UI changes, visual QA on all changed files; blocks with the full report until they pass. Then asks for one review turn when needed (see below), optionally after a second opinion from a stronger model |
 
 The gate runs the checks itself; it never trusts a "PASS" written by the agent. Run it by hand with `python3 scripts/agy_hook.py check [project]`. The pre-commit hook (`install_git_hooks.py`) runs the same gate without the browser step (`check --no-visual`).
 
@@ -232,8 +235,28 @@ These make a fast model work like a careful one.
 | **Tests must fail without the change** | review | The changed tests run on the base commit (temporary worktree, scoped to those files for pytest, Jest, Vitest and npm test). If they pass there too, they prove nothing: agy must make them check the changed behaviour, or say it is a pure refactor. Off: `"prove_tests": false`. |
 | **Public API changed** | review | Exported symbols removed or with changed signatures (`api_contract_guard.py`). agy must check every caller. Off: `"api_guard": false`. |
 | **Deleted comments or large blocks** | review | Comment and docstring stripping, large deletions, nesting blow-ups (`diff_guard.py`). Off: `"diff_guard": false`. |
+| **Changed lines no test runs** | review | The test run is instrumented when the runner supports it (pytest with pytest-cov, Vitest with a coverage provider, Jest, `npm test` running either). Changed production lines that no test executed are listed. Without the plugin, the plain test command runs and the gate adds a note. Off: `"coverage": false` or `AGY_COVERAGE=0` (also off with the test-first rule). |
+| **Acceptance criteria** | failure / review | At the start agy writes `.agy/criteria.md` (3 to 5 checkable behaviours). At Stop, an unticked criterion fails; a missing file, a file older than the conversation or a criterion ticked without evidence gets a review. `.agy/` is added to `.git/info/exclude`. Off: `"criteria": false` or `AGY_CRITERIA=0`. |
+| **Loop breaker** | report | The same failure twice in a row (numbers ignored) adds a debug protocol: reproduce, read the code path, test hypotheses before editing. At the 4th time (`AGY_LOOP_ESCALATE`) agy must stop and explain to you what fails, what it tried and what it needs; the next stop is allowed. |
+| **Second opinion** | review | Opt-in, see below. |
 
 A **review** blocks the stop once with the findings and asks agy to answer them; the next stop on the same content is allowed. Reviews run only when all hard checks pass.
+
+pytest's "no tests collected" (exit 5) does not fail the gate, unless the change has test files: then pytest cannot see them, and the gate says how to name them.
+
+### Guided start
+On the first model call of a conversation agy gets a compact map of the repository (files and main symbols, about 1,200 tokens) and the request to restate the task, read the files involved, and write its acceptance criteria before it changes code. The language rules in `rules/languages/` and `rules/database/` (or the project copies in `.agents/rules/`) are injected once per conversation, when a file they apply to first changes. Off: `"repo_map": false`, `"language_rules": false`, `AGY_GUIDED_START=0`.
+
+### Second opinion from a stronger model (optional)
+When all other checks pass, a stronger model reads the acceptance criteria and the diff and looks for what tests miss: wrong logic, edge cases, security, broken callers, tests that do not test the change. Blocker and major findings become one review turn for agy. Turn it on in `.agents/agy.json`:
+```json
+"second_opinion": {"provider": "anthropic", "model": "claude-opus-5-5"}
+"second_opinion": {"provider": "gemini", "model": "gemini-2.5-pro"}
+```
+The API key comes only from the environment agy runs in: `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` / `GOOGLE_API_KEY` (`"api_key_env"` names another variable). It is never written to disk. Other keys: `effort` (Anthropic, default `high`), `max_diff_chars` (default 60000), `timeout` (seconds, default 180), `url` (a compatible gateway). A missing key, an API error or a refusal is a note, never a block. Each check of a changed diff is one API call, billed to your key. Off for a session: `AGY_SECOND_OPINION=0`.
+
+### Gate statistics
+Every verdict is appended to `.git/agy/gate-log.jsonl`. `python3 scripts/agy_hook.py stats [project] [--days 7] [--json]` shows passes, reviews, blocks and give-ups, the most frequent failures and reviews, attempts needed to pass, the first-try pass rate and the average gate time. Use it to see which rules agy breaks most and whether a change to the setup helped.
 
 ### Visual QA of UI changes
 When the change touches `.tsx .jsx .vue .svelte .astro .html .css .scss .sass .less` (tests and stories excluded), the gate opens the page in headless Chromium at 1280x800 and 375x667. It blocks on JS exceptions, console errors, failed same-origin requests (HTTP 4xx/5xx), horizontal overflow on mobile, and WCAG violations (`lang`, `<title>`, `alt`, button names). The report lists the screenshots and tells agy to open them.
@@ -267,6 +290,11 @@ Only you edit this file; the guard blocks the agent from writing it.
   "prove_tests": true,
   "api_guard": true,
   "diff_guard": true,
+  "coverage": true,
+  "criteria": true,
+  "repo_map": true,
+  "language_rules": true,
+  "second_opinion": {"provider": "anthropic", "model": "claude-opus-5-5"},
   "visual_qa": {
     "url": "http://localhost:5173",
     "dev_command": "npm run dev -- --port {port}",
@@ -290,6 +318,12 @@ Without it the gate auto-detects the test command (pytest, vitest/jest, cargo, g
 | `AGY_TEST_TIMEOUT=600` | seconds for each test/typecheck/lint command |
 | `AGY_VISUAL_QA=0` | turn the visual QA step off |
 | `AGY_READ_BEFORE_WRITE=0` | allow edits to files agy has not opened |
+| `AGY_COVERAGE=0` | do not instrument the tests for changed-line coverage |
+| `AGY_CRITERIA=0` | do not ask for or check acceptance criteria |
+| `AGY_GUIDED_START=0` | no repository map and criteria request at the start |
+| `AGY_LOOP_ESCALATE=4` | identical failures in a row before agy must stop and ask you for help |
+| `AGY_SECOND_OPINION=0` | skip the second opinion even when configured |
+| `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | keys for the optional second opinion |
 | `AGY_PRE_TOOL_GUARD=0` | turn the PreToolUse guard off |
 | `AGY_HOOK_DEBUG=1` | log raw hook payloads to `~/.gemini/agy-hook-debug.log` |
 
