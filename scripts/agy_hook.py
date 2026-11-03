@@ -380,6 +380,7 @@ def resolve_commands(root: Path, cfg: Dict[str, Any]) -> Dict[str, str]:
 class CheckResult:
     def __init__(self) -> None:
         self.failures: List[Tuple[str, str]] = []
+        self.reviews: List[Tuple[str, str]] = []  # agy must look once; they do not fail the gate
         self.notes: List[str] = []
         self.ran: List[str] = []
 
@@ -391,7 +392,7 @@ class CheckResult:
         self.failures.append((title, _shorten(detail)))
 
 
-def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool = True) -> CheckResult:
+def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool = True, base: str = "") -> CheckResult:
     """The verification gate. Cheap checks first; tests only when the code parses.
     `visual=False` skips the browser step (used by the git pre-commit hook)."""
     result = CheckResult()
@@ -467,11 +468,11 @@ def run_checks(root: Path, files: List[str], cfg: Dict[str, Any], visual: bool =
 
     # 5. Visual QA: open the changed UI in a browser (desktop + mobile).
     if visual:
-        run_visual_step(root, code_files, cfg, result)
+        run_visual_step(root, code_files, cfg, result, base)
     return result
 
 
-def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], result: CheckResult) -> None:
+def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], result: CheckResult, base: str = "") -> None:
     try:
         from visual_gate import frontend_files, run_visual_gate, visual_config
         fe = frontend_files(code_files)
@@ -481,12 +482,14 @@ def run_visual_step(root: Path, code_files: List[str], cfg: Dict[str, Any], resu
         if vcfg is None:
             result.notes.append("Visual QA turned off for this project.")
             return
-        outcome = run_visual_gate(root, fe, vcfg, state_dir(root) / "visual")
+        outcome = run_visual_gate(root, fe, vcfg, state_dir(root) / "visual", base=base)
         if outcome.ran:
             result.ran.append("visual-qa")
         result.notes.extend(outcome.notes)
         for title, detail in outcome.failures:
             result.fail(title, detail)
+        for title, detail in outcome.review:
+            result.reviews.append((title, _shorten(detail, 4000)))
     except Exception as e:
         result.fail("Visual QA step crashed", f"{e}\n{traceback.format_exc(limit=3)}")
 
@@ -509,7 +512,28 @@ def format_report(result: CheckResult, files: List[str]) -> str:
         lines.append(f"## {title}")
         lines.append(detail)
         lines.append("")
+    for title, detail in result.reviews:
+        lines.append(f"## {title}")
+        lines.append(detail)
+        lines.append("")
     lines.append(f"Re-run all checks yourself with: {self_command('check')}")
+    text = "\n".join(lines)
+    if len(text) > MAX_REASON_CHARS:
+        text = text[: MAX_REASON_CHARS - 200] + "\n[... report cut ...]\n" + lines[-1]
+    return text
+
+
+def format_review(result: CheckResult) -> str:
+    lines = [
+        "[Antigravity Stop Gate] All checks pass, but your change altered the rendered UI. "
+        "Review it before you finish: this is required once for these changes.",
+        "",
+    ]
+    for title, detail in result.reviews:
+        lines.append(f"## {title}")
+        lines.append(detail)
+        lines.append("")
+    lines.append("When the changes are what you intended, finish again. If you edit files, the checks run again.")
     text = "\n".join(lines)
     if len(text) > MAX_REASON_CHARS:
         text = text[: MAX_REASON_CHARS - 200] + "\n[... report cut ...]\n" + lines[-1]
@@ -660,7 +684,15 @@ def evaluate_stop(payload: Dict[str, Any]) -> Dict[str, Any]:
     if cached and not cached.get("ok") and cached.get("report"):
         report = cached["report"]
     else:
-        result = run_checks(root, files, cfg)
+        result = run_checks(root, files, cfg, base=base)
+        if result.ok and result.reviews:
+            # Checks pass, but the UI changed: give agy one turn with the before/after images.
+            # The next stop on the same content is allowed.
+            cache[fp] = {"ok": True, "t": time.time()}
+            state["checks"] = _trim_dict(cache, 20)
+            state.pop("gave_up", None)
+            save_state(root, state)
+            return {"decision": "continue", "reason": format_review(result)}
         if result.ok:
             cache[fp] = {"ok": True, "t": time.time()}
             # Test runs may touch tracked files (snapshots, lock files): remember both states.
@@ -720,9 +752,12 @@ def cli_check(target: str, visual: bool = True) -> int:
     cfg = load_project_config(root)
     print(f"Project: {root}")
     print(f"Changed files ({len(files)}): " + (", ".join(files[:20]) or "none"))
-    result = run_checks(root, files, cfg, visual=visual)
+    # Compare the UI against HEAD: the work-tree changes are what is being checked.
+    result = run_checks(root, files, cfg, visual=visual, base="HEAD")
     for note in result.notes:
         print(f"Note: {note}")
+    if result.ok and result.reviews:
+        print(format_review(result))
     print(f"Checks run: {', '.join(result.ran) or 'none'}")
     if result.ok and visual:
         fp = fingerprint(root, files, json.dumps(cfg, sort_keys=True))

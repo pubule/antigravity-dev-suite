@@ -50,6 +50,12 @@ When the Playwright MCP server (`@playwright/mcp`) is active:
 
 ---
 
+## 🔍 Before / After Review
+The gate compares every page with the base commit. When it reports "Visual changes to review":
+1. Open the `before`, `after` and `diff` images of each page. Red pixels in the diff are the changed ones.
+2. For each page, write one sentence: what changed, and whether you meant it.
+3. A change you did not mean (another page, shifted layout, cut text) is a defect. Fix it.
+
 ## 📋 Verification Checklist
 - [ ] Desktop preview (1280x800) matches design layout.
 - [ ] Mobile preview (375x667) has **zero horizontal scrollbar**.

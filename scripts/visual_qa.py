@@ -457,6 +457,62 @@ def capture_visual_artifacts(target: str, output_dir: str, test_mode: bool = Fal
             except (OSError, PermissionError):
                 temp_synthetic_file = None
 
+DIFF_JS = """async ([a, b, tol]) => {
+    const load = (src) => new Promise((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = src; });
+    const [ia, ib] = await Promise.all([load(a), load(b)]);
+    const w = Math.max(ia.width, ib.width), h = Math.max(ia.height, ib.height);
+    const draw = (img) => { const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const x = c.getContext('2d'); x.fillStyle = '#ff00ff'; x.fillRect(0, 0, w, h); x.drawImage(img, 0, 0);
+        return x.getImageData(0, 0, w, h); };
+    const da = draw(ia), db = draw(ib);
+    const out = document.createElement('canvas'); out.width = w; out.height = h;
+    const ox = out.getContext('2d'); const od = ox.createImageData(w, h);
+    let changed = 0, minY = h, maxY = -1;
+    for (let p = 0; p < da.data.length; p += 4) {
+        const d = Math.max(Math.abs(da.data[p] - db.data[p]), Math.abs(da.data[p+1] - db.data[p+1]), Math.abs(da.data[p+2] - db.data[p+2]));
+        if (d > tol) {
+            changed++; const y = Math.floor(p / 4 / w); if (y < minY) minY = y; if (y > maxY) maxY = y;
+            od.data[p] = 255; od.data[p+1] = 0; od.data[p+2] = 0; od.data[p+3] = 255;
+        } else {
+            const g = (db.data[p] + db.data[p+1] + db.data[p+2]) / 3;
+            od.data[p] = od.data[p+1] = od.data[p+2] = 200 + g * 0.2; od.data[p+3] = 255;
+        }
+    }
+    ox.putImageData(od, 0, 0);
+    return { width: w, height: h, changed, ratio: changed / (w * h || 1),
+             sizeA: [ia.width, ia.height], sizeB: [ib.width, ib.height],
+             rows: maxY >= 0 ? [minY, maxY] : null, png: out.toDataURL('image/png') };
+}"""
+
+
+def diff_screenshots(before: str, after: str, diff_out: str, tolerance: int = 32) -> dict:
+    """Pixel diff of two PNG screenshots, computed in headless Chromium (no extra dependencies).
+    Writes a PNG with changed pixels in red over a faded copy of `after`."""
+    import base64
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {"status": "SKIPPED_DEPENDENCY"}
+
+    def data_url(path: str) -> str:
+        return "data:image/png;base64," + base64.b64encode(Path(path).read_bytes()).decode("ascii")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        try:
+            page = browser.new_page()
+            res = page.evaluate(DIFF_JS, [data_url(before), data_url(after), tolerance])
+        finally:
+            browser.close()
+    png = res.pop("png", "")
+    if png.startswith("data:image/png;base64,"):
+        out = Path(diff_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(base64.b64decode(png.split(",", 1)[1]))
+        res["diff"] = str(out)
+    res["status"] = "OK"
+    return res
+
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Visual QA Screenshot Runner")
     parser.add_argument("target", nargs="?", default="--test-mode", help="HTML file path, component path, or HTTP URL to inspect")
@@ -465,9 +521,19 @@ def main():
     parser.add_argument("--dev-server", default="", help="Explicit dev server base URL (e.g. http://localhost:3000)")
     parser.add_argument("--port", type=int, default=None, help="Explicit port to probe for dev server (e.g. 3000)")
     parser.add_argument("--test-mode", action="store_true", help="Run in self-test synthetic mode")
+    parser.add_argument("--diff", nargs=2, metavar=("BEFORE_PNG", "AFTER_PNG"), help="Pixel diff of two screenshots instead of inspecting a page")
+    parser.add_argument("--diff-out", default="", help="Where --diff writes the diff image")
     parser.add_argument("--fail-on-skip", action="store_true", help="Exit 3 instead of 0 when the page cannot be inspected (no Playwright, no dev server)")
     
     args = parser.parse_args()
+    if args.diff:
+        out = args.diff_out or str(Path(args.output_dir) / "diff.png")
+        try:
+            print(json.dumps(diff_screenshots(args.diff[0], args.diff[1], out), indent=2))
+        except Exception as e:
+            print(json.dumps({"status": "ERROR", "error": str(e)}, indent=2))
+            sys.exit(1)
+        sys.exit(0)
     is_test = args.test_mode or (args.target == "--test-mode")
     target = "" if is_test else args.target
     

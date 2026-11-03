@@ -15,6 +15,11 @@ Where the page comes from (first match wins):
 3. Changed static HTML files (not server templates): opened directly from disk.
 4. A dev server that already runs on a common local port.
 
+Before/after: the gate opens the same pages on the base commit (a detached
+`git worktree`, with a `dev_command` that has a `{port}` placeholder for dev servers).
+Only defects the base commit did not have block. Pages whose screenshots changed
+are listed with before, after and diff images, and agy must review them once.
+
 When none of these works, or Playwright/Chromium is missing, the gate fails with
 the exact fix. It never skips in silence. Turn the step off with
 `"visual_qa": false` in `.agents/agy.json` or `AGY_VISUAL_QA=0`.
@@ -54,6 +59,7 @@ TEMPLATE_SYNTAX_RE = re.compile(r"\{%|\{\{|<%|<\?php|\{#")
 DEFAULT_PAGE_TIMEOUT = 90
 DEFAULT_STARTUP_TIMEOUT = 90
 MAX_PAGES = 8
+DEFAULT_DIFF_THRESHOLD = 0.001  # share of pixels that must change before agy has to review
 
 
 class VisualOutcome:
@@ -61,6 +67,7 @@ class VisualOutcome:
 
     def __init__(self) -> None:
         self.failures: List[Tuple[str, str]] = []
+        self.review: List[Tuple[str, str]] = []  # not failures: agy must look once, then may finish
         self.notes: List[str] = []
         self.ran = False
 
@@ -292,37 +299,90 @@ def _browser_missing(data: Dict[str, Any]) -> bool:
 
 # ------------------------------------------------------------------- the step
 
-def _resolve_targets(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
-                     log_path: Path, outcome: VisualOutcome) -> Tuple[List[str], Optional[DevServer]]:
-    """Pages to open, and the dev server the gate started (to stop afterwards)."""
-    url = vcfg.get("url") if isinstance(vcfg.get("url"), str) else ""
-    url = url.strip()
-    dev_command = vcfg.get("dev_command") if isinstance(vcfg.get("dev_command"), str) else ""
-    dev_command = dev_command.strip()
+class Page:
+    """One page to inspect. `label` is stable across runs (a route or a project-relative
+    file); `target` is what visual_qa.py opens now (a URL or an absolute file path)."""
+
+    def __init__(self, label: str, target: str, route: str = "") -> None:
+        self.label = label
+        self.target = target
+        self.route = route
+
+
+class Plan:
+    """How the current pages were found, and how to rebuild them on the base commit."""
+
+    def __init__(self) -> None:
+        self.pages: List[Page] = []
+        self.server: Optional[DevServer] = None
+        self.kind = ""            # "static" | "url" | "auto"
+        self.port_command = ""    # dev_command with a {port} placeholder: baseline possible
+        self.routes: List[str] = []
+
+
+def free_port() -> int:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _str(vcfg: Dict[str, Any], key: str) -> str:
+    val = vcfg.get(key)
+    return val.strip() if isinstance(val, str) else ""
+
+
+def _url_pages(base: str, routes: List[str]) -> List[Page]:
+    return [Page(r, _join(base, r), r) for r in routes]
+
+
+def _start_and_wait(command: str, cwd: Path, url: str, startup: int, log_path: Path) -> Tuple[Optional[DevServer], str]:
+    server = DevServer(command, cwd, log_path)
+    server.start()
+    if _wait_for(lambda: server_answers(url), server, startup):
+        return server, ""
+    tail = server.log_tail()
+    server.stop()
+    return None, f"`{command}` did not answer at {url} within {startup}s.\nLast output:\n{tail}"
+
+
+def _resolve_plan(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
+                  log_path: Path, outcome: VisualOutcome) -> Plan:
+    """Pages to open now, and the dev server the gate started (to stop afterwards)."""
+    plan = Plan()
+    url = _str(vcfg, "url")
+    dev_command = _str(vcfg, "dev_command")
     startup = _int(vcfg.get("startup_timeout"), DEFAULT_STARTUP_TIMEOUT)
     routes = _routes(vcfg)
+    plan.routes = routes
+    if "{port}" in dev_command:
+        plan.port_command = dev_command
+        if not url:
+            url = f"http://localhost:{free_port()}"
+        dev_command = dev_command.replace("{port}", str(_host_port(url)[1]))
 
     if url:
+        plan.kind = "url"
         if server_answers(url):
-            return [_join(url, r) for r in routes], None
+            plan.pages = _url_pages(url, routes)
+            return plan
         if not dev_command:
             outcome.fail("Visual QA: dev server not running",
                          f"Nothing answers at {url} (visual_qa.url in .agents/agy.json).\n"
                          "Start the dev server, then finish again. To let the gate start it, ask the user "
-                         "to set \"visual_qa\": {\"dev_command\": \"npm run dev\"} in .agents/agy.json.")
-            return [], None
-        server = DevServer(dev_command, root, log_path)
-        server.start()
-        if _wait_for(lambda: server_answers(url), server, startup):
-            outcome.notes.append(f"Visual QA started `{dev_command}` for {url}.")
-            return [_join(url, r) for r in routes], server
-        tail = server.log_tail()
-        server.stop()
-        outcome.fail("Visual QA: dev server did not start",
-                     f"`{dev_command}` did not answer at {url} within {startup}s.\nLast output:\n{tail}")
-        return [], None
+                         "to set \"visual_qa\": {\"dev_command\": \"npm run dev -- --port {port}\"} in .agents/agy.json.")
+            return plan
+        server, err = _start_and_wait(dev_command, root, url, startup, log_path)
+        if server is None:
+            outcome.fail("Visual QA: dev server did not start", err)
+            return plan
+        outcome.notes.append(f"Visual QA started `{dev_command}` for {url}.")
+        plan.server = server
+        plan.pages = _url_pages(url, routes)
+        return plan
 
     if dev_command:
+        plan.kind = "url"
         before = set(_active_ports())
         server = DevServer(dev_command, root, log_path)
         server.start()
@@ -335,24 +395,33 @@ def _resolve_targets(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
         if _wait_for(new_port, server, startup):
             base = f"http://localhost:{found[0]}"
             outcome.notes.append(f"Visual QA started `{dev_command}` on {base}.")
-            return [_join(base, r) for r in routes], server
+            plan.server = server
+            plan.pages = _url_pages(base, routes)
+            return plan
         tail = server.log_tail()
         server.stop()
         outcome.fail("Visual QA: dev server did not start",
                      f"`{dev_command}` opened no new local port within {startup}s. "
-                     "Ask the user to add \"url\" to the visual_qa block in .agents/agy.json.\n"
+                     "Ask the user to add \"url\" to the visual_qa block in .agents/agy.json, "
+                     "or a {port} placeholder to dev_command.\n"
                      f"Last output:\n{tail}")
-        return [], None
+        return plan
 
     static = static_html_targets(root, fe_files)
     if static:
-        return static, None
+        plan.kind = "static"
+        for target in static:
+            rel = Path(target).resolve().relative_to(root.resolve()).as_posix()
+            plan.pages.append(Page(rel, target))
+        return plan
 
     active = _active_ports()
     if active:
+        plan.kind = "auto"
         base = f"http://localhost:{active[0]}"
         outcome.notes.append(f"Visual QA used the dev server already running on {base} (auto-detected).")
-        return [_join(base, r) for r in routes], None
+        plan.pages = _url_pages(base, routes)
+        return plan
 
     outcome.fail(
         "Visual QA could not run: no page to open",
@@ -360,52 +429,305 @@ def _resolve_targets(root: Path, fe_files: List[str], vcfg: Dict[str, Any],
         "\nNo dev server is running and no static HTML page changed.\n"
         "Start the project's dev server (for example `npm run dev`) and finish again.\n"
         "To make this automatic, ask the user to add to .agents/agy.json:\n"
-        '  "visual_qa": {"url": "http://localhost:5173", "dev_command": "npm run dev", "routes": ["/"]}\n'
+        '  "visual_qa": {"dev_command": "npm run dev -- --port {port}", "routes": ["/"]}\n'
         "or \"visual_qa\": false when the project has no UI to check.",
     )
-    return [], None
+    return plan
 
 
-def run_visual_gate(root: Path, fe_files: List[str], vcfg: Dict[str, Any], out_base: Path) -> VisualOutcome:
+# ------------------------------------------------------------------- baseline
+
+ENV_FILES = (".env", ".env.local", ".env.development", ".env.development.local")
+_NORMALIZE_RE = re.compile(r"https?://[^/\s]+|file://\S+?(?=[\s:]|$)|:\d+:\d+|\b\d+(\.\d+)?(px|ms|s)?\b")
+
+
+def _normalize(defect: str) -> str:
+    """Make a defect comparable across runs: drop origins, file URLs, positions and numbers."""
+    return _NORMALIZE_RE.sub("#", defect)
+
+
+def new_defects(current: List[str], baseline: List[str]) -> List[str]:
+    """Defects of the current page that the base commit did not have (count-aware)."""
+    remaining: Dict[str, int] = {}
+    for d in baseline:
+        key = _normalize(d)
+        remaining[key] = remaining.get(key, 0) + 1
+    out: List[str] = []
+    for d in current:
+        key = _normalize(d)
+        if remaining.get(key, 0) > 0:
+            remaining[key] -= 1
+        else:
+            out.append(d)
+    return out
+
+
+def _git(args: List[str], cwd: Path, timeout: int = 120) -> Tuple[int, str]:
+    try:
+        res = subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True,
+                             timeout=timeout, check=False, encoding="utf-8", errors="replace")
+        return res.returncode, (res.stdout or "") + (res.stderr or "")
+    except (OSError, subprocess.SubprocessError) as e:
+        return 1, str(e)
+
+
+def _link_dir(target: Path, link: Path) -> bool:
+    """Directory link that works without admin rights: symlink on POSIX, junction on Windows."""
+    try:
+        if os.name == "nt":
+            res = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                                 capture_output=True, check=False, timeout=30)
+            return res.returncode == 0
+        os.symlink(str(target), str(link), target_is_directory=True)
+        return True
+    except (OSError, subprocess.SubprocessError) as err:
+        logger.debug("Cannot link %s: %s", link, err)
+        return False
+
+
+def _unlink_dir(link: Path) -> None:
+    """Remove a directory link without touching what it points to."""
+    try:
+        if os.name == "nt":
+            os.rmdir(str(link))  # removes a junction, never its target
+        elif link.is_symlink():
+            link.unlink()
+    except OSError as err:
+        logger.debug("Cannot remove link %s: %s", link, err)
+
+
+class Worktree:
+    """Detached checkout of the base commit, with the project's node_modules and .env files."""
+
+    def __init__(self, root: Path, base: str, path: Path) -> None:
+        self.root = root
+        self.base = base
+        self.path = path
+        self.links: List[Path] = []
+
+    def __enter__(self) -> "Worktree":
+        self.remove()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        code, out = _git(["worktree", "add", "--detach", "--force", str(self.path), self.base], self.root)
+        if code != 0:
+            raise RuntimeError(f"git worktree add failed: {out.strip()[-500:]}")
+        nm = self.root / "node_modules"
+        if nm.is_dir() and not (self.path / "node_modules").exists():
+            if _link_dir(nm, self.path / "node_modules"):
+                self.links.append(self.path / "node_modules")
+        for name in ENV_FILES:
+            src = self.root / name
+            dst = self.path / name
+            if src.is_file() and not dst.exists():
+                try:
+                    dst.write_bytes(src.read_bytes())
+                except OSError as err:
+                    logger.debug("Cannot copy %s: %s", name, err)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.remove()
+
+    def remove(self) -> None:
+        for link in self.links:
+            _unlink_dir(link)
+        self.links = []
+        if self.path.exists():
+            # A link left by an interrupted run: remove the link itself first, so that
+            # "git worktree remove" can never delete the project's real node_modules.
+            _unlink_dir(self.path / "node_modules")
+            _git(["worktree", "remove", "--force", str(self.path)], self.root)
+        _git(["worktree", "prune"], self.root)
+
+
+def _baseline_cache(out_base: Path, sha: str) -> Path:
+    return out_base / "baseline" / sha[:12]
+
+
+def _load_cached(cache: Path, label: str) -> Optional[Dict[str, Any]]:
+    f = cache / _slug(label) / "result.json"
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _store(cache: Path, label: str, data: Dict[str, Any]) -> None:
+    d = cache / _slug(label)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "result.json").write_text(json.dumps(data), encoding="utf-8")
+    except OSError as err:
+        logger.debug("Cannot store baseline result: %s", err)
+
+
+def capture_baseline(root: Path, base: str, plan: Plan, vcfg: Dict[str, Any],
+                     out_base: Path, outcome: VisualOutcome) -> Dict[str, Dict[str, Any]]:
+    """Inspect the same pages on the base commit. Returns {label: visual_qa result};
+    a label missing from the result means the page did not exist at the base commit."""
+    if plan.kind not in ("static", "url") or (plan.kind == "url" and not plan.port_command):
+        outcome.notes.append(
+            "No before/after comparison: give dev_command a {port} placeholder in .agents/agy.json "
+            "so the gate can run the base commit on its own port.")
+        return {}
+    code, sha = _git(["rev-parse", "--verify", f"{base or 'HEAD'}^{{commit}}"], root)
+    sha = sha.strip().splitlines()[-1] if code == 0 and sha.strip() else ""
+    if not sha:
+        outcome.notes.append("No before/after comparison: the base commit is unknown.")
+        return {}
+    cache = _baseline_cache(out_base, sha)
+    results: Dict[str, Dict[str, Any]] = {}
+    missing = []
+    for page in plan.pages:
+        cached = _load_cached(cache, page.label)
+        if cached is not None:
+            if cached.get("status") != "ABSENT":
+                results[page.label] = cached
+        else:
+            missing.append(page)
+    if not missing:
+        return results
+
+    timeout = _int(vcfg.get("timeout"), DEFAULT_PAGE_TIMEOUT)
+    startup = _int(vcfg.get("startup_timeout"), DEFAULT_STARTUP_TIMEOUT)
+    try:
+        with Worktree(root, sha, out_base / "baseline-worktree") as wt:
+            server: Optional[DevServer] = None
+            base_url = ""
+            try:
+                if plan.kind == "url":
+                    port = free_port()
+                    base_url = f"http://localhost:{port}"
+                    command = plan.port_command.replace("{port}", str(port))
+                    server, err = _start_and_wait(command, wt.path, base_url, startup,
+                                                  out_base / "baseline-server.log")
+                    if server is None:
+                        outcome.notes.append("No before/after comparison: the base commit did not start.\n" + err)
+                        return results
+                for page in missing:
+                    if plan.kind == "static":
+                        target = wt.path / page.label
+                        if not target.is_file():
+                            _store(cache, page.label, {"status": "ABSENT"})
+                            continue
+                        target_str = str(target)
+                    else:
+                        target_str = _join(base_url, page.route or "/")
+                    data = inspect_target(target_str, cache / _slug(page.label), timeout)
+                    if data.get("status") in ("SUCCESS", "FAIL"):
+                        _store(cache, page.label, data)
+                        results[page.label] = data
+            finally:
+                if server is not None:
+                    server.stop()
+    except RuntimeError as e:
+        outcome.notes.append(f"No before/after comparison: {e}")
+    return results
+
+
+def screenshot_diff(before: str, after: str, out: Path, timeout: int) -> Optional[Dict[str, Any]]:
+    cmd = [sys.executable, str(VISUAL_QA), "--diff", before, after, "--diff-out", str(out)]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False,
+                             encoding="utf-8", errors="replace")
+        data = json.loads(res.stdout)
+        return data if isinstance(data, dict) and data.get("status") == "OK" else None
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as err:
+        logger.debug("Screenshot diff failed: %s", err)
+        return None
+
+
+def _float(val: Any, default: float) -> float:
+    try:
+        return max(0.0, float(val))
+    except (TypeError, ValueError):
+        return default
+
+
+def run_visual_gate(root: Path, fe_files: List[str], vcfg: Dict[str, Any], out_base: Path,
+                    base: str = "") -> VisualOutcome:
     outcome = VisualOutcome()
     page_timeout = _int(vcfg.get("timeout"), DEFAULT_PAGE_TIMEOUT)
-    targets, server = _resolve_targets(root, fe_files, vcfg, out_base / "dev-server.log", outcome)
+    threshold = _float(vcfg.get("diff_threshold"), DEFAULT_DIFF_THRESHOLD)
+    plan = _resolve_plan(root, fe_files, vcfg, out_base / "dev-server.log", outcome)
+    current: Dict[str, Dict[str, Any]] = {}
     try:
-        if not targets:
+        if not plan.pages:
             return outcome
         outcome.ran = True
-        problems: List[str] = []
-        shots: List[str] = []
-        for target in targets:
-            label = target
-            if not re.match(r"^https?://", target):
-                try:
-                    label = Path(target).resolve().relative_to(root.resolve()).as_posix()
-                except (ValueError, OSError):
-                    label = target  # outside the project: keep the full path
-            out_dir = out_base / _slug(label)
-            data = inspect_target(target, out_dir, page_timeout)
+        for page in plan.pages:
+            data = inspect_target(page.target, out_base / "current" / _slug(page.label), page_timeout)
             if _browser_missing(data):
                 outcome.fail("Visual QA could not run: Playwright or Chromium is missing", install_hint())
                 return outcome
-            for shot in (data.get("screenshots") or {}).values():
-                shots.append(str(shot))
-            if data.get("status") == "ERROR":
-                problems.append(f"### {target}\nCould not inspect the page:\n" +
-                                "\n".join(str(w) for w in (data.get("warnings") or [])[:5]))
-                continue
-            defects = page_defects(data)
-            if defects:
-                problems.append(f"### {target}\n" + "\n".join(f"- {d}" for d in defects[:15]))
-        if shots:
-            outcome.notes.append("Visual QA screenshots: " + ", ".join(shots))
-        if problems:
-            detail = "\n".join(problems)
-            if shots:
-                detail += ("\n\nOpen these screenshots and look at them before you fix the code "
-                           "(desktop 1280x800, mobile 375x667):\n" + "\n".join(f"- {s}" for s in shots))
-            outcome.fail("Visual QA found defects in the rendered page", detail)
-        return outcome
+            current[page.label] = data
     finally:
-        if server is not None:
-            server.stop()
+        if plan.server is not None:
+            plan.server.stop()
+
+    baseline = capture_baseline(root, base, plan, vcfg, out_base, outcome) if vcfg.get("compare", True) else {}
+
+    problems: List[str] = []
+    changes: List[str] = []
+    shots: List[str] = []
+    failing_shots: List[str] = []
+    for page in plan.pages:
+        data = current[page.label]
+        page_shots = data.get("screenshots") or {}
+        shots.extend(str(s) for s in page_shots.values())
+        if data.get("status") == "ERROR":
+            problems.append(f"### {page.target}\nCould not inspect the page:\n" +
+                            "\n".join(str(w) for w in (data.get("warnings") or [])[:5]))
+            continue
+        defects = page_defects(data)
+        before = baseline.get(page.label)
+        if before is not None:
+            fresh = new_defects(defects, page_defects(before))
+            old = len(defects) - len(fresh)
+            if old:
+                outcome.notes.append(f"{page.label}: {old} defect(s) already present on the base commit (not blocking).")
+            defects = fresh
+        if defects:
+            problems.append(f"### {page.target}\n" + "\n".join(f"- {d}" for d in defects[:15]))
+            failing_shots.extend(str(s) for s in page_shots.values())
+        if before is None:
+            if baseline or plan.kind == "static":
+                changes.append(f"### {page.label}: new page (not on the base commit)\n" +
+                               "\n".join(f"- after: {s}" for s in page_shots.values()))
+            continue
+        before_shots = before.get("screenshots") or {}
+        for view in ("desktop", "mobile"):
+            a, b = before_shots.get(view), page_shots.get(view)
+            if not a or not b or not Path(a).is_file() or not Path(b).is_file():
+                continue
+            diff = screenshot_diff(a, b, out_base / "diff" / _slug(page.label) / f"{view}_diff.png", page_timeout)
+            if diff is None or diff.get("ratio", 0) <= threshold:
+                continue
+            rows = diff.get("rows") or [0, 0]
+            size = ""
+            if diff.get("sizeA") != diff.get("sizeB"):
+                size = f", page size {diff['sizeA'][0]}x{diff['sizeA'][1]} -> {diff['sizeB'][0]}x{diff['sizeB'][1]}"
+            changes.append(
+                f"### {page.label} ({view}): {diff['ratio'] * 100:.1f}% of pixels changed, rows {rows[0]}-{rows[1]}{size}\n"
+                f"- before: {a}\n- after: {b}\n- diff (changed pixels in red): {diff.get('diff', '')}")
+
+    if shots:
+        outcome.notes.append("Visual QA screenshots: " + ", ".join(shots))
+    if problems:
+        detail = "\n".join(problems)
+        if baseline:
+            detail = "These defects are new: the base commit did not have them.\n" + detail
+        if failing_shots:
+            detail += ("\n\nOpen these screenshots and look at them before you fix the code "
+                       "(desktop 1280x800, mobile 375x667):\n" + "\n".join(f"- {s}" for s in failing_shots))
+        outcome.fail("Visual QA found defects in the rendered page", detail)
+    if changes:
+        outcome.review.append((
+            "Visual changes to review",
+            "Your change altered these pages. Open each before, after and diff image and look at them.\n"
+            "For every page, say in one sentence what changed and whether you meant it. "
+            "Fix any change you did not intend, such as a page you did not mean to touch, shifted layout, "
+            "cut text or overlapping elements.\n\n" + "\n\n".join(changes),
+        ))
+    return outcome

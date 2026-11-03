@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## [1.19.0] — 2026-11-03
+
+### 🔍 Visual QA compares before and after
+The visual step now finds the defects a change **introduces**, not only the ones a page has.
+
+- **Baseline from the base commit.** The gate opens the same pages on the commit the session started from (`HEAD` for `check`) in a temporary detached `git worktree`. It links `node_modules` (symlink, or a junction on Windows) and copies `.env` files. Dev servers run side by side through a `{port}` placeholder in `visual_qa.dev_command`. The worktree is always removed, and the link is removed first so the real `node_modules` is never touched. Results are cached per base commit.
+- **Only new defects block.** Defects the base commit already had become a note. Matching ignores ports, file URLs, line:column positions and numbers.
+- **Screenshot diff.** New `visual_qa.py --diff BEFORE AFTER --diff-out PNG` computes the pixel diff inside Chromium (no new dependencies) and writes changed pixels in red.
+- **One review turn.** When the checks pass but a page changed by more than `diff_threshold` (default 0.1% of pixels), or a page is new, the Stop gate blocks once with the before, after and diff images, and asks agy to say for each page what changed and whether it was intended. The next stop on the same content is allowed.
+- New config keys: `compare` (default `true`) and `diff_threshold`.
+
+---
+
 ## [1.18.0] — 2026-11-03
 
 ### 👁️ Visual QA is enforced on UI changes
