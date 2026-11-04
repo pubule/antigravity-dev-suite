@@ -20,3 +20,8 @@ Thumbs.db
 
 # Critic cache
 .agy_cache/
+
+# Session scratch
+HANDOFF.md
+HANDOFF.prev.md
+.dev-pipeline-state.json

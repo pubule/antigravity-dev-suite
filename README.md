@@ -186,6 +186,16 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoBrowsers
 ```
 
+### 🤖 Claude Code (Global Installation)
+```bash
+# In Claude Code 2.1.275+:
+/plugin install antigravity-dev-suite --marketplace pubule/antigravity-dev-suite
+
+# Or via CLI:
+claude plugin marketplace add pubule/antigravity-dev-suite
+claude plugin install antigravity-dev-suite --scope user
+```
+
 Requirements: Python 3.9+ (the macOS system `python3` works) and git. The installer:
 1. links the suite into `~/.gemini/config/plugins/antigravity-dev-suite`;
 2. registers the hooks in `~/.gemini/config/hooks.json` (read by both the Antigravity IDE and CLI), with the absolute path of your Python, so `python3` vs `py` and shell differences do not matter;
