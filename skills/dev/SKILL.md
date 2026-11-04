@@ -164,7 +164,7 @@ Compare the recorded task against the user's current request. "Same task" includ
 
 | Found | Recorded task vs request | Action |
 |---|---|---|
-| `HANDOFF.md`, Status IN PROGRESS/PAUSED | same | Show task, phase N, next step, open questions. Ask: "Riprendo dalla Phase N? [Y / Restart / Nuova task]" |
+| `HANDOFF.md`, Status IN PROGRESS/PAUSED | same | Show task, phase N, next step, open questions. Ask: "Resume from Phase N? [Y / Restart / New task]" |
 | `HANDOFF.md`, Status IN PROGRESS/PAUSED | different | Do NOT resume. Say what the stale pipeline was. Rename to `HANDOFF.prev.md`, then Step 0b for the new task |
 | `HANDOFF.md`, Status DONE | any | Not a resume. Read it as prior context (decisions, dead ends, commands still apply), then Step 0b |
 | state file only, no `HANDOFF.md` | same | Resume from the state file, and **backfill `HANDOFF.md` immediately** (see Backfill below) before touching any phase |
@@ -186,7 +186,7 @@ Compare the recorded task against the user's current request. "Same task" includ
 
 1. Get task description (from args or ask user).
 2. Classify magnitude: **TRIVIAL** (config/typo/1-file/deps/style) | **STANDARD** (feature/multi-file/bug/API) | **COMPLEX** (architecture/new module/cross-cutting/security-sensitive).
-2b. **Set `IS_GREENFIELD`** (see §IS_GREENFIELD trigger). Announce it: "🧯 Greenfield rilevato — error handling & logging saranno progettati in Phase 1 e verificati al gate G2.5b." Store in state as `isGreenfield`.
+2b. **Set `IS_GREENFIELD`** (see §IS_GREENFIELD trigger). Announce it: "🧯 Greenfield detected — error handling & logging will be designed in Phase 1 and verified at gate G2.5b." Store in state as `isGreenfield`.
    - **IS_GREENFIELD + TRIVIAL is a contradiction.** A new tool/app/module is never trivial. Escalate to STANDARD (upward reclassification is the default) and say why. If the user insists on TRIVIAL, keep the flag: the trivial path still owes the proportional Error & Logging proposal (§Resilience & Observability Design, minimal subset) inline before implementing, and G2.5b still applies.
 3. Show classification + active phases + advisory cost estimate (~20K trivial / ~120K standard / ~250K+ complex). Token estimates are advisory only — Claude Code has no runtime token counter.
 4. Ask user: proceed / override magnitude / abort.
@@ -224,35 +224,35 @@ Compare the recorded task against the user's current request. "Same task" includ
 
 **Frontend-heavy features (HAS_FRONTEND):** When the feature is primarily UI/UX (new page, component redesign, form flow, dashboard), also invoke `Skill(impeccable, "shape <feature description>")` as supplement. Shape runs structured UX discovery and produces a design brief — append to brainstorming doc. Optional: do not block Phase 1 if user declines or feature has no UI surface.
 
-**Greenfield features (IS_GREENFIELD) — MANDATORY:** the design doc MUST contain an **Error & Logging Strategy** section, presented to the user as an explicit proposal (not a silent default) before Phase 1 exits. See §Resilience & Observability Design for the questions to answer. Present it as: proposta → alternative → costo. The user can slim it down; they cannot be left unaware of it. Record any reduction under `Waived / deferred` in `HANDOFF.md`.
+**Greenfield features (IS_GREENFIELD) — MANDATORY:** the design doc MUST contain an **Error & Logging Strategy** section, presented to the user as an explicit proposal (not a silent default) before Phase 1 exits. See §Resilience & Observability Design for the questions to answer. Present it as: proposal → alternatives → cost. The user can slim it down; they cannot be left unaware of it. Record any reduction under `Waived / deferred` in `HANDOFF.md`.
 
 **Exit:** User approved design. Design doc saved to `docs/superpowers/specs/`. If IS_GREENFIELD: design doc contains an approved Error & Logging Strategy section.
 **Completion:** Update `.dev-pipeline-state.json`: add `1` to `completedPhases`. Announce: "✅ Phase 1: Brainstorm complete. Design doc saved. Next: Phase 2 or 3."
 
 ### Resilience & Observability Design (IS_GREENFIELD)
 
-Answer every line. "Non serve" is a valid answer **only if written down with a reason** — a blank is a gap, not a decision.
+Answer every line. "Not needed" is a valid answer **only if written down with a reason** — a blank is a gap, not a decision.
 
-**Errori**
-1. **Tassonomia** — quali errori esistono: attesi (validazione/dominio), esterni (rete, API, DB, filesystem), bug interni. Un tipo/classe per famiglia, non stringhe sparse.
-2. **Confini di cattura** — dove si catturano: top-level dell'entrypoint (CLI `main`, handler HTTP, consumer del job) + i confini di I/O. In mezzo si propaga, non si inghiotte.
-3. **Wrapping** — errore rilanciato preservando la causa originale (`cause`, `from e`, `%w`). Mai perdere lo stack.
-4. **Mappatura in uscita** — errore interno → exit code / HTTP status / messaggio utente. Il messaggio all'utente non espone stack, path interni, query, o segreti.
-5. **Transient vs permanente** — cosa si ritenta: retry con backoff+jitter, tetto ai tentativi, idempotenza garantita. **Timeout esplicito su ogni chiamata esterna** (default della libreria = nessun timeout, quasi sempre).
-6. **Cleanup** — risorse rilasciate anche sul percorso di errore (file, connessioni, lock, subprocess). Shutdown ordinato su SIGINT/SIGTERM.
-7. **Fail fast** — config e credenziali validate all'avvio, non alla prima richiesta.
-8. **Errori mai silenziati** — nessun `catch {}` vuoto, nessun `except: pass`. Se è deliberato, serve un commento con il perché.
+**Errors**
+1. **Taxonomy** — which errors exist: expected (validation/domain), external (network, API, DB, filesystem), internal bugs. Dedicated class/type per family, no scattered strings.
+2. **Catch boundaries** — where errors are caught: top-level of entrypoints (CLI `main`, HTTP handlers, job consumers) + I/O boundaries. In between, propagate; never swallow.
+3. **Wrapping** — rethrow preserving original cause (`cause`, `from e`, `%w`). Never lose the stack trace.
+4. **Outbound mapping** — internal error → exit code / HTTP status / user message. User-facing messages must never expose stack traces, internal paths, raw queries, or secrets.
+5. **Transient vs permanent** — retry policy: backoff with jitter, max attempts, idempotency guarantee. **Explicit timeout on every external call** (library defaults almost always lack timeouts).
+6. **Cleanup** — ensure resources are released on error paths (files, connections, locks, child processes). Graceful shutdown on SIGINT/SIGTERM.
+7. **Fail fast** — configuration and credentials validated at startup, not upon first request.
+8. **Errors never silenced** — no empty `catch {}` or `except: pass`. If deliberate, include an explanatory comment.
 
-**Log**
-9. **Libreria** — riusare quella già nel progetto. Se assente: structured logger dello stdlib/ecosistema, non `print`/`console.log` sparsi. Nessuna nuova dipendenza se lo stdlib basta.
-10. **Livelli** — quando si usa ognuno: ERROR (azione umana necessaria), WARN (degradato ma gestito), INFO (eventi di business ai confini), DEBUG (diagnostica). Livello configurabile via env/flag.
-11. **Formato e sink** — JSON strutturato per servizi/log aggregati; leggibile su TTY per CLI. Dove finisce (stdout/stderr, file, collector) e con quale rotazione/retention.
-12. **Campi obbligatori** — timestamp, level, component/modulo, evento, e un **correlation/request id propagato** lungo tutta la richiesta.
-13. **Redazione** — password, token, chiavi, PII mai loggati. Redazione centralizzata, non affidata al chiamante.
-14. **Cosa si logga ai confini** — ogni chiamata esterna: esito + durata. Serve per diagnosticare senza un debugger.
-15. **Anti-duplicazione** — non loggare *e* rilanciare lo stesso errore a ogni livello: si logga dove si gestisce. Niente log dentro hot loop.
+**Logging**
+9. **Library** — reuse existing project logger. If absent: standard library/ecosystem structured logger, not scattered `print` or `console.log`. No new dependencies if standard library suffices.
+10. **Levels** — clear guidelines: ERROR (human action required), WARN (degraded but handled), INFO (business events at boundaries), DEBUG (diagnostics). Level configurable via env/flags.
+11. **Format and sink** — structured JSON for services/aggregated logs; readable TTY for CLI. Explicit destination (stdout/stderr, file, collector) with log rotation/retention.
+12. **Mandatory fields** — timestamp, level, component/module, event name, and a **propagated correlation/request ID** across requests.
+13. **Redaction** — passwords, tokens, API keys, and PII must never be logged. Centralized redaction, not left to callers.
+14. **Boundary logging** — log every external call: outcome + duration for zero-debugger diagnostics.
+15. **Anti-duplication** — do not both log and re-raise the same error at multiple levels: log where handled. No logging inside hot loops.
 
-**Proporzione:** uno script one-shot ha bisogno dei punti 2, 4, 8, 9, 10 — non di 15 punti. Un servizio con integrazioni esterne li vuole tutti. Proponi il sottoinsieme adatto alla magnitudine e dillo esplicitamente.
+**Proportionality:** a one-shot script needs points 2, 4, 8, 9, 10 — not all 15 points. A service with external integrations needs all 15. Propose the subset proportional to magnitude and state it explicitly.
 
 ## Phase 2: Design Council (complex only)
 
@@ -525,37 +525,37 @@ Scan changed files. Check: README, CLAUDE.md, API docs, inline docs (JSDoc/TSDoc
 
 ## Phase 10.5: Knowledge Quiz (always)
 
-Quiz sull'implementazione appena completata. Scopo: il developer mantiene il polso sul codice che Claude ha scritto. Non bloccante — risultato informativo.
+Interactive quiz on the newly completed implementation. Purpose: ensure the developer maintains full awareness and ownership of code authored by Claude. Non-blocking — purely informative result.
 
 ### Question Generation
 
-Genera domande in italiano basate su:
-- **File modificati** (`git diff --name-only`) — "Quale file gestisce X?"
-- **Logica chiave** — "Come funziona il nuovo Y?" / "Perché Z usa questo pattern?"
-- **Decisioni di design** — "Perché abbiamo scelto A invece di B?"
-- **Edge case gestiti** — "Cosa succede se l'input è vuoto/nullo/enorme?"
-- **Errori e log** (obbligatoria se IS_GREENFIELD, ≥1 domanda) — "Cosa succede se la chiamata a X va in timeout?" / "Dove viene catturato l'errore Y e cosa vede l'utente?" / "A quale livello viene loggato Z e perché?"
-- **Test scritti** — "Quale scenario copre il test T?"
-- **Dipendenze** — "Quale modulo esistente viene riusato e perché?"
+Generate questions based on:
+- **Modified files** (`git diff --name-only`) — "Which file handles X?"
+- **Key logic** — "How does the new Y work?" / "Why does Z follow this pattern?"
+- **Design decisions** — "Why did we choose approach A over B?"
+- **Handled edge cases** — "What happens if input is empty, null, or exceeding bounds?"
+- **Errors & logging** (mandatory if IS_GREENFIELD, ≥1 question) — "What happens if call to X times out?" / "Where is error Y caught and what does the user see?" / "At which log level is Z emitted and why?"
+- **Test coverage** — "Which scenario is verified by test T?"
+- **Dependencies** — "Which existing module was reused and why?"
 
-Mix: ~40% domande su COSA è cambiato, ~30% su COME funziona, ~30% su PERCHÉ (decisioni).
+Mix: ~40% questions on WHAT changed, ~30% on HOW it works, ~30% on WHY (decisions).
 
 ### Adaptive Depth
 
-- **TRIVIAL:** 5 domande.
-- **STANDARD:** 10 domande.
-- **COMPLEX:** 10 domande + 2 bonus architetturali su trade-off e alternative scartate.
+- **TRIVIAL:** 5 questions.
+- **STANDARD:** 10 questions.
+- **COMPLEX:** 10 questions + 2 architectural bonus questions on trade-offs and discarded alternatives.
 
 ### Format
 
-Presenta tutte le domande numerate in un blocco. User risponde (anche sinteticamente, anche in batch). Claude valuta ogni risposta:
-- ✅ Corretta
-- ⚠️ Parziale — aggiunge dettaglio mancante
-- ❌ Errata — spiega risposta corretta con riferimento a file:linea
+Present all numbered questions together in one block. The user answers (concisely or in batch). Claude evaluates each answer:
+- ✅ Correct
+- ⚠️ Partial — provides missing detail
+- ❌ Incorrect — explains the correct answer with file:line references
 
 ### Scoring
 
-Report finale: X/N corrette, Y parziali, Z errate. No gate — quiz non blocca Phase 11. Risultato puramente informativo.
+Final report: X/N correct, Y partial, Z incorrect. No gate — quiz does not block Phase 11. Result is informative only.
 
 **Completion:** Update `.dev-pipeline-state.json`: add `10.5` to `completedPhases`, set `knowledgeQuiz: { total: N, correct: X, partial: Y, wrong: Z }`. Announce: "✅ Phase 10.5: Knowledge Quiz complete. Score: X/N. Next: Phase 11."
 

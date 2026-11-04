@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>/dev Command Documentation</title>
+<style>
+  :root { --bg: #fff; --text: #1a1a1a; --muted: #666; --border: #e0e0e0; --accent: #2563eb; --green: #16a34a; --orange: #ea580c; --red: #dc2626; --purple: #7c3aed; --surface: #f8fafc; --code-bg: #f1f5f9; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 960px; margin: 0 auto; padding: 2.5rem 2rem; color: var(--text); line-height: 1.7; background: var(--bg); }
+  h1 { font-size: 2rem; margin-bottom: 0.5rem; letter-spacing: -0.02em; }
+  h2 { font-size: 1.4rem; margin: 2.5rem 0 1rem; padding-bottom: 0.4rem; border-bottom: 2px solid var(--border); letter-spacing: -0.01em; }
+  h3 { font-size: 1.1rem; margin: 1.5rem 0 0.6rem; }
+  p { margin-bottom: 0.8rem; }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 2rem; }
+  code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.88em; font-family: 'SF Mono', 'Fira Code', monospace; }
+  pre { background: var(--code-bg); padding: 1rem 1.2rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; font-size: 0.85rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  ul, ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+  li { margin-bottom: 0.4rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+  th { background: var(--surface); text-align: left; padding: 0.6rem 0.8rem; border: 1px solid var(--border); font-weight: 600; }
+  td { padding: 0.5rem 0.8rem; border: 1px solid var(--border); vertical-align: top; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; margin: 1.2rem 0; }
+  .card h3 { margin-top: 0; }
+  .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+  .badge-trivial { background: #dcfce7; color: #166534; }
+  .badge-standard { background: #dbeafe; color: #1e40af; }
+  .badge-complex { background: #fce7f3; color: #9d174d; }
+  .badge-interactive { background: #fef3c7; color: #92400e; }
+  .badge-parallel { background: #e0e7ff; color: #3730a3; }
+  .flow { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 1rem 0; }
+  .flow-item { padding: 0.4rem 0.8rem; border-radius: 6px; font-size: 0.82rem; font-weight: 500; white-space: nowrap; }
+  .flow-arrow { color: var(--muted); font-size: 1.2rem; }
+  .flow-interactive { background: #fef3c7; border: 1px solid #fbbf24; }
+  .flow-workflow { background: #e0e7ff; border: 1px solid #818cf8; }
+  .flow-always { background: #dcfce7; border: 1px solid #86efac; }
+  .flow-skip { background: #f1f5f9; border: 1px solid #cbd5e1; color: #94a3b8; }
+  .arch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0; }
+  .arch-box { padding: 1.2rem; border-radius: 10px; }
+  .arch-skill { background: #fef3c7; border: 2px solid #f59e0b; }
+  .arch-workflow { background: #e0e7ff; border: 2px solid #6366f1; }
+  .arch-box h4 { margin-bottom: 0.6rem; }
+  .arch-box ul { font-size: 0.88rem; }
+  .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0; }
+  .pros { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 1.2rem; }
+  .cons { background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 1.2rem; }
+  .pros h3 { color: var(--green); margin-top: 0; }
+  .cons h3 { color: var(--red); margin-top: 0; }
+  .loop-diagram { background: #faf5ff; border: 1px solid #d8b4fe; border-radius: 10px; padding: 1.2rem; margin: 1rem 0; }
+  .loop-diagram h4 { color: var(--purple); margin-bottom: 0.5rem; }
+  .timeline { position: relative; padding-left: 2rem; margin: 1.5rem 0; }
+  .timeline::before { content: ''; position: absolute; left: 0.6rem; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .timeline-item { position: relative; margin-bottom: 1.2rem; padding-left: 1rem; }
+  .timeline-item::before { content: ''; position: absolute; left: -1.7rem; top: 0.45rem; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); background: white; }
+  .timeline-item.done::before { background: var(--green); border-color: var(--green); }
+  details { margin: 0.8rem 0; border: 1px solid var(--border); border-radius: 8px; }
+  summary { padding: 0.8rem 1rem; cursor: pointer; font-weight: 600; font-size: 0.93rem; background: var(--surface); border-radius: 8px; }
+  summary:hover { background: #f1f5f9; }
+  details[open] summary { border-bottom: 1px solid var(--border); border-radius: 8px 8px 0 0; }
+  details .detail-content { padding: 1rem; font-size: 0.9rem; }
+  .invocation { background: #1e293b; color: #e2e8f0; padding: 1.2rem 1.5rem; border-radius: 10px; margin: 1rem 0; font-family: 'SF Mono', monospace; font-size: 0.95rem; }
+  .invocation .prompt { color: #94a3b8; }
+  .invocation .cmd { color: #38bdf8; }
+  .invocation .arg { color: #a78bfa; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); text-align: center; }
+  @media (max-width: 700px) { .arch-grid, .pros-cons { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>/dev</h1>
+<p class="subtitle">Magnitude-Aware SDLC Pipeline &mdash; From idea to ship-ready code in one command</p>
+
+<!-- ─── INVOCATION ─────────────────────────────────────── -->
+
+<h2>How to Use</h2>
+
+<div class="invocation">
+  <span class="prompt">&gt;</span> <span class="cmd">/dev</span><br>
+  <span class="prompt">&gt;</span> <span class="cmd">/dev</span> <span class="arg">add user authentication with OAuth2</span><br>
+  <span class="prompt">&gt;</span> <span class="cmd">/dev</span> <span class="arg">fix the null pointer in the payment handler</span><br>
+  <span class="prompt">&gt;</span> <span class="cmd">/dev</span> <span class="arg">update the README with new API docs</span>
+</div>
+
+<p>Type <code>/dev</code> optionally followed by a task description. The command classifies the task's magnitude and runs proportional ceremony &mdash; a typo fix skips councils and audits, a new module gets the full pipeline with parallel agents and adversarial code review.</p>
+
+<!-- ─── ARCHITECTURE ───────────────────────────────────── -->
+
+<h2>Architecture</h2>
+
+<p>Hybrid design: <strong>SKILL.md</strong> handles interactive phases (needs user input), <strong>Workflow JS</strong> handles parallelizable phases (runs in background with deterministic loops).</p>
+
+<div class="arch-grid">
+  <div class="arch-box arch-skill">
+    <h4>SKILL.md <span class="badge badge-interactive">Interactive</span></h4>
+    <ul>
+      <li>Phase 0: Triage + cost estimate</li>
+      <li>Phase 1: Brainstorm (asks questions)</li>
+      <li>Phase 2: Design Council (user reviews verdict)</li>
+      <li>Phase 3: Write plan</li>
+      <li>Phase 4: Set up worktree</li>
+      <li>Phase 9: Ship Council (user reviews verdict)</li>
+      <li>Phase 10: Docs check</li>
+      <li>Phase 10.5: Knowledge Quiz (interactive)</li>
+      <li>Phase 11: Finish (merge/PR/commit)</li>
+    </ul>
+  </div>
+  <div class="arch-box arch-workflow">
+    <h4>implement-and-review.js <span class="badge badge-parallel">Parallel</span></h4>
+    <ul>
+      <li>Phase 5: Parallel implementation (1 agent per task)</li>
+      <li>Phase 5b: Integration agent (merge worktrees)</li>
+      <li>Phase 6: Verify + debug loop (max 3 cycles)</li>
+      <li>Phase 7: Code review + adversarial verify</li>
+      <li>Phase 7b: Graduated remediation (max 3 cycles)</li>
+      <li>Phase 8: Parallel audits + remediation</li>
+    </ul>
+  </div>
+</div>
+
+<table>
+  <tr><th>File</th><th>Lines</th><th>Role</th></tr>
+  <tr><td><code>SKILL.md</code></td><td>621</td><td>Orchestrator &mdash; interactive phases, council loops, state &amp; handoff management</td></tr>
+  <tr><td><code>implement-and-review.js</code></td><td>310</td><td>Workflow &mdash; parallel agents, deterministic loops, schema validation</td></tr>
+  <tr><td><code>~/.claude/hooks/dev-handoff-detect.js</code></td><td>194</td><td><code>SessionStart</code> hook &mdash; surfaces an interrupted <code>HANDOFF.md</code>, warns on concurrent sessions. Run <code>node dev-handoff-detect.js --selftest</code> to verify.</td></tr>
+  <tr><td><code>README.html</code></td><td>this file</td><td>Documentation</td></tr>
+</table>
+
+<!-- ─── MAGNITUDE TRIAGE ───────────────────────────────── -->
+
+<h2>Magnitude Triage</h2>
+
+<p>Phase 0 classifies every task into one of three levels. This is the <strong>single source of truth</strong> &mdash; all phase skip/run decisions derive from it.</p>
+
+<div class="card">
+  <h3><span class="badge badge-trivial">TRIVIAL</span> Config, typo, 1-file fix, deps, style-only</h3>
+  <div class="flow">
+    <span class="flow-item flow-always">Triage</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Implement</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Verify</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-skip">Security*</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Docs</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Quiz</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Finish</span>
+  </div>
+  <p style="font-size:0.85rem; color:var(--muted)">TDD optional. No councils. No worktree. Security* if HAS_FRONTEND/HAS_API. 5-question quiz. ~20K tokens.</p>
+</div>
+
+<div class="card">
+  <h3><span class="badge badge-standard">STANDARD</span> Feature, multi-file, bug fix, API change</h3>
+  <div class="flow">
+    <span class="flow-item flow-interactive">Triage</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Brainstorm</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Plan</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Worktree</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-workflow">Workflow (5-8)</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Ship Council</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Docs</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Quiz</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Finish</span>
+  </div>
+  <p style="font-size:0.85rem; color:var(--muted)">TDD mandatory. Ship council only. Worktree isolated. Conditional audits. 10-question quiz. ~120K tokens.</p>
+</div>
+
+<div class="card">
+  <h3><span class="badge badge-complex">COMPLEX</span> Architecture, new module, cross-cutting, security</h3>
+  <div class="flow">
+    <span class="flow-item flow-interactive">Triage</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Brainstorm</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Design Council</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Plan</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Worktree</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-workflow">Workflow (5-8)</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Ship Council</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Docs</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-interactive">Quiz</span>
+    <span class="flow-arrow">&rarr;</span>
+    <span class="flow-item flow-always">Finish</span>
+  </div>
+  <p style="font-size:0.85rem; color:var(--muted)">TDD mandatory. Both councils. Worktree isolated. Conditional audits. 12-question quiz. ~250K+ tokens.</p>
+</div>
+
+<p><strong>Dynamic re-evaluation:</strong> Triage is not final. Magnitude is re-evaluated at 2 checkpoints (after codebase analysis, after first implementation). Upward reclassification by default; downward with user confirmation only. Dirty-tree handling via <code>git stash</code> on escalation.</p>
+
+<!-- ─── PHASE BREAKDOWN ────────────────────────────────── -->
+
+<h2>Phase-by-Phase Breakdown</h2>
+
+<details>
+  <summary>Phase 0: Triage + Cost Estimate <span class="badge badge-trivial">T</span> <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p><strong>Step 0a &mdash; Resume check (always first).</strong> Resolve the project root, look for <code>HANDOFF.md</code> and <code>.dev-pipeline-state.json</code>, and read the handoff in full before anything else. Reconciles what was found against the user's current request: resume / treat as prior context / archive and start fresh. See <a href="#handoff">Handoff File</a>.</p>
+    <p><strong>Exit invariant:</strong> <code>HANDOFF.md</code> exists at the project root before Phase 0 ends &mdash; on every path. A state file with no handoff (pipeline started by an older version of the skill, or handoff deleted) is <em>backfilled</em> from the state file plus git, not skipped and not handed back to the user to reconstruct.</p>
+    <p><strong>Step 0b &mdash; Fresh pipeline:</strong></p>
+    <ol>
+      <li>Get task description (from <code>/dev &lt;args&gt;</code> or ask user)</li>
+      <li>Classify magnitude: TRIVIAL / STANDARD / COMPLEX</li>
+      <li>Show classification + active phases + advisory cost estimate</li>
+      <li>Ask user: proceed / override / abort</li>
+      <li>Create task list, write initial <code>.dev-pipeline-state.json</code></li>
+      <li>Resolve project root, write initial <code>HANDOFF.md</code> there</li>
+    </ol>
+    <p><strong>Cost estimates are advisory</strong> &mdash; Claude Code has no runtime token counter.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 1: Brainstorm <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p><strong>Skill:</strong> <code>superpowers:brainstorming</code></p>
+    <p>Explores project context, asks clarifying questions one at a time, proposes 2-3 approaches with trade-offs, presents design for user approval. Saves design doc to <code>docs/superpowers/specs/</code>.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 2: Design Council <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p><strong>Skill:</strong> <code>llm-council</code> (5 advisors + peer review + chairman)</p>
+    <p>Councils the design for implementation-readiness: soundness, completeness, scope, risk. GO &rarr; proceed. NO-GO &rarr; Council Remediation Loop (max 5 iterations).</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 3: Write Plan <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p><strong>Skill:</strong> <code>superpowers:writing-plans</code></p>
+    <p>Maps file structure, defines bite-sized tasks with TDD steps. Saves to <code>docs/superpowers/plans/</code>.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 4: Git Worktree <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p><strong>Skill:</strong> <code>superpowers:using-git-worktrees</code></p>
+    <p>Creates isolated workspace on a feature branch. All implementation happens in the worktree.</p>
+  </div>
+</details>
+
+<details open>
+  <summary>Phases 5-8: Implement + Verify + Review + Audit <span class="badge badge-parallel">WORKFLOW</span></summary>
+  <div class="detail-content">
+    <p>For STANDARD/COMPLEX, these 4 phases run as a <strong>single background Workflow</strong> with parallel agents and deterministic JS loops. For TRIVIAL, runs inline without the workflow. <strong>Security audit</strong> runs for ALL magnitudes when changed files match HAS_FRONTEND or HAS_API.</p>
+
+    <h4 style="margin-top:1rem">5. Implement (parallel)</h4>
+    <p>One agent per task, each in its own isolated worktree. All tasks run in parallel. Integration agent merges results and resolves conflicts.</p>
+
+    <h4>6. Verify (loop: max 3 cycles)</h4>
+    <p>Full test suite. On failure: systematic debugging &rarr; fix &rarr; re-test. Repeats up to 3 times. Falls back to build verification if no test script exists.</p>
+
+    <h4>7. Code Review (adversarial)</h4>
+    <p>Maestro structured review &rarr; conditional 2nd review (only if HIGH+ found) &rarr; <strong>adversarial verify</strong> (independent agents try to refute each HIGH+ finding) &rarr; graduated remediation loop (max 3 cycles).</p>
+
+    <h4>8. Conditional Audits (parallel)</h4>
+    <p>Auto-triggered by changed file types. Security, accessibility, performance audits run in parallel. Remediation loop (max 3 cycles) for HIGH+ findings.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 9: Ship Council <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p><strong>Skill:</strong> <code>llm-council</code></p>
+    <p>Councils the implementation for ship-readiness. Includes: summary, test results, review findings, audit results, diff stats. GO &rarr; proceed. NO-GO &rarr; re-runs the Workflow with council feedback (max 5 iterations).</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 10: Documentation Check <span class="badge badge-trivial">T</span> <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p>Scans changed files. Checks: README, CLAUDE.md, API docs, inline docs, design doc (marks IMPLEMENTED), changelog. Updates stale docs.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 10.5: Knowledge Quiz <span class="badge badge-trivial">T</span> <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p>Interactive knowledge quiz on the newly completed implementation. Purpose: ensure the developer maintains full awareness and ownership of code authored by Claude.</p>
+    <ul>
+      <li><strong>TRIVIAL:</strong> 5 questions</li>
+      <li><strong>STANDARD:</strong> 10 questions</li>
+      <li><strong>COMPLEX:</strong> 10 questions + 2 architectural bonus questions</li>
+    </ul>
+    <p>Mix: ~40% on what changed, ~30% on how it works, ~30% on why (design decisions). Evaluation per answer: ✅ correct, ⚠️ partial, ❌ incorrect with file:line reference.</p>
+    <p><strong>Non-blocking</strong> &mdash; purely informative result, does not block Phase 11.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Phase 11: Finish <span class="badge badge-trivial">T</span> <span class="badge badge-standard">S</span> <span class="badge badge-complex">C</span></summary>
+  <div class="detail-content">
+    <p><strong>STANDARD/COMPLEX:</strong> <code>superpowers:finishing-a-development-branch</code> &mdash; merge, PR, or cleanup.</p>
+    <p><strong>TRIVIAL:</strong> Simple finish &mdash; commit, leave unstaged, or discard.</p>
+  </div>
+</details>
+
+<!-- ─── AGENT COMMUNICATION ────────────────────────────── -->
+
+<h2>Agent Communication Patterns</h2>
+
+<p>Agents don't talk directly. The Workflow script mediates all communication by passing results between agents.</p>
+
+<div class="card">
+  <h3>1. Chain</h3>
+  <p>Output of each phase becomes input of the next. No context loss between stages.</p>
+  <pre><code>Agent A (implement) &rarr; result &rarr; Agent B (verify) &rarr; result &rarr; Agent C (review)</code></pre>
+</div>
+
+<div class="card">
+  <h3>2. Adversarial Verify</h3>
+  <p>After review, each HIGH+ finding gets an independent verifier that tries to <strong>refute</strong> it. Only confirmed findings proceed to remediation. Eliminates false positives.</p>
+  <pre><code>Reviewer finds 5 HIGH issues
+  &rarr; 5 parallel verifiers try to refute each
+  &rarr; 3 confirmed, 2 refuted
+  &rarr; Only 3 go to remediation (saved 2 unnecessary fix cycles)</code></pre>
+</div>
+
+<div class="card">
+  <h3>3. Panel (Council)</h3>
+  <p>5 independent advisors with different thinking styles + anonymous peer review + chairman synthesis. Based on Karpathy's LLM Council methodology.</p>
+</div>
+
+<div class="card">
+  <h3>4. Integration Agent</h3>
+  <p>After parallel implementation in isolated worktrees, a dedicated agent merges all results and resolves merge conflicts.</p>
+</div>
+
+<!-- ─── LOOPS ──────────────────────────────────────────── -->
+
+<h2>Remediation Loops</h2>
+
+<p>All loops have hard caps. Technical loops (verify, review, audit) use deterministic JS <code>for</code> loops. Council loops use prompt-level iteration with user interaction.</p>
+
+<div class="loop-diagram">
+  <h4>Verify &rarr; Debug Loop (Workflow JS)</h4>
+  <pre><code>for (attempt = 0; attempt < 3; attempt++) {
+  run tests &rarr; if pass: break
+  systematic debug &rarr; fix root cause &rarr; loop
+}
+// After 3 failures: return FAILED</code></pre>
+</div>
+
+<div class="loop-diagram">
+  <h4>Graduated Remediation Loop (Workflow JS)</h4>
+  <pre><code>for (cycle = 0; cycle < 3; cycle++) {
+  LOW/MEDIUM &rarr; fix inline, re-verify only
+  HIGH &rarr; fix, re-verify, lightweight re-review
+  CRITICAL &rarr; amend plan, re-implement, full verify + review
+}
+// After 3 cycles: remaining findings reported to council</code></pre>
+</div>
+
+<div class="loop-diagram">
+  <h4>Council Remediation Loop (SKILL.md)</h4>
+  <pre><code>while (council says NO && iterations < 5) {
+  extract feedback &rarr; remediate &rarr; re-council
+}
+// After 5: ask user &mdash; continue / force-proceed / abort / reset</code></pre>
+</div>
+
+<table>
+  <tr><th>Loop</th><th>Location</th><th>Max</th><th>Deterministic?</th></tr>
+  <tr><td>Verify &rarr; debug</td><td>Workflow JS</td><td>3</td><td>Yes (<code>for</code> loop)</td></tr>
+  <tr><td>Review remediation</td><td>Workflow JS</td><td>3</td><td>Yes (<code>for</code> loop)</td></tr>
+  <tr><td>Audit remediation</td><td>Workflow JS</td><td>3</td><td>Yes (<code>for</code> loop)</td></tr>
+  <tr><td>Design council</td><td>SKILL.md</td><td>5</td><td>No (prompt)</td></tr>
+  <tr><td>Ship council</td><td>SKILL.md</td><td>5</td><td>No (prompt)</td></tr>
+</table>
+
+<!-- ─── STATE & ROLLBACK ───────────────────────────────── -->
+
+<h2>State Persistence &amp; Rollback</h2>
+
+<div class="card">
+  <h3>Pipeline State</h3>
+  <p>Written to <code>.dev-pipeline-state.json</code> after every phase completion, reclassification, and remediation cycle.</p>
+  <p><strong>Fields:</strong> task, magnitude, currentPhase, completedPhases, rollbackSHA, remediationCounts, designDoc, planDoc, worktreePath, startedAt.</p>
+  <p><strong>Resume:</strong> Phase 0 Step 0a. If found: "Found interrupted pipeline &mdash; Resume / Restart / Abort?"</p>
+  <p><strong>Cleanup:</strong> Deleted on pipeline completion or user abort.</p>
+</div>
+
+<div class="card" id="handoff">
+  <h3>Handoff File &mdash; <code>HANDOFF.md</code></h3>
+  <p>The state file is <em>machine</em> state (phases, gates, booleans). <code>HANDOFF.md</code> is <em>why and where we are</em>, in prose, written for a Claude with zero memory. It exists so a <code>/clear</code>, a compaction, or a new session the next morning does not cost you the context you paid for.</p>
+
+  <p><strong>Location.</strong> Project root &mdash; <em>not</em> necessarily the directory Claude was launched from. Resolved once at Phase 0, first hit wins:</p>
+  <ol>
+    <li><code>worktreePath</code> from Phase 4, if a worktree exists</li>
+    <li><code>git rev-parse --show-toplevel</code> from the directory of the files being changed</li>
+    <li>Nearest ancestor holding <code>package.json</code> / <code>pyproject.toml</code> / <code>go.mod</code> / <code>Cargo.toml</code> / <code>pom.xml</code> / <code>.git</code> / <code>CLAUDE.md</code></li>
+    <li>cwd &mdash; and Claude says so out loud, because it may be wrong</li>
+  </ol>
+
+  <p><strong>Contents.</strong> Rewritten in full at every phase completion, every reclassification, every failure, and at context exhaustion:</p>
+  <table>
+    <tr><th>Section</th><th>What it carries</th></tr>
+    <tr><td>Goal</td><td>The ask in the user's own terms + the acceptance condition</td></tr>
+    <tr><td>Where we are</td><td>Current phase, completed vs remaining, gate status</td></tr>
+    <tr><td>Next step</td><td>The next concrete action, specific enough to execute cold</td></tr>
+    <tr><td>Files touched</td><td>Changed files <em>and</em> files merely read &mdash; the slow-to-rebuild context</td></tr>
+    <tr><td>Key decisions</td><td>Decision + reason + the alternative that was rejected</td></tr>
+    <tr><td>Failures &amp; dead ends</td><td>What was tried, the <em>verbatim</em> error, how it resolved</td></tr>
+    <tr><td>Do NOT</td><td>Approaches already ruled out &mdash; stops a fresh Claude re-treading them</td></tr>
+    <tr><td>Open questions</td><td>Pending user decisions</td></tr>
+    <tr><td>Waived / deferred</td><td>Findings consciously not fixed, and who waived them</td></tr>
+    <tr><td>Commands</td><td>Test / build / lint / run &mdash; only ones actually verified this session</td></tr>
+  </table>
+
+  <p><strong>Lifecycle.</strong> Created at Phase 0, refreshed after every phase, and <em>kept</em> at Phase 11 with <code>Status: DONE</code> &mdash; unlike the state file, it is not deleted. It is the record of what was built and what was deliberately left undone.</p>
+
+  <p><strong>Self-healing.</strong> The file is created whenever it is found missing, never merely expected to be there. Phase 0 guarantees one on every path; each subsequent phase entry re-checks and writes one if absent. A pipeline that predates this feature, or whose handoff was deleted, is backfilled from <code>.dev-pipeline-state.json</code> plus <code>git status</code> / <code>git diff --stat &lt;rollbackSHA&gt;</code>, with the sections that cannot be recovered (dead ends, decisions, verified commands) marked <code>(not recorded &mdash; predates handoff tracking)</code>. Partial beats absent.</p>
+
+  <p><strong>Stale pipelines.</strong> When the recorded task does not match what you are asking for now, <code>/dev</code> does not resume it. It reports what the old pipeline was, archives it to <code>HANDOFF.prev.md</code>, and offers: resume the old task, archive it and start the new one, or abort.</p>
+
+  <p><strong>Rules.</strong> Facts only, no plans described as done. Errors quoted verbatim. Under ~150 lines. Never any secrets &mdash; it is plaintext in the repo.</p>
+</div>
+
+<div class="card">
+  <h3>Session Isolation &amp; Collisions</h3>
+  <p>The <code>SessionStart</code> hook <code>~/.claude/hooks/dev-handoff-detect.js</code> surfaces any interrupted handoff at session start, so <code>/dev</code> finds it even when Claude has no memory of writing it.</p>
+  <p>The hook is a per-session child process: it reads <em>that</em> session's <code>cwd</code> from stdin and its output reaches only that session's context. Multiple terminals never cross-talk. It exits silently when there is nothing to report, so it costs nothing in unrelated sessions.</p>
+  <table>
+    <tr><th>Scenario</th><th>Outcome</th></tr>
+    <tr><td>Several terminals, different repos</td><td>Isolated by cwd &mdash; nothing to do</td></tr>
+    <tr><td>Same repo, different worktrees</td><td>Isolated &mdash; each worktree is its own root</td></tr>
+    <tr><td>Same repo, same directory</td><td>Real collision &mdash; handled below</td></tr>
+  </table>
+  <p>For the last case, <code>HANDOFF.md</code> stamps <code>Session: &lt;id&gt; (pid &lt;n&gt;)</code>. Before its first write, <code>/dev</code> checks whether a different owning pid is <em>still alive</em>. Alive means a second terminal is genuinely running a pipeline here: Claude stops and offers a separate worktree, a takeover, or an abort. A dead pid is just your own earlier session &mdash; taken over silently, no warning. No lock files, so nothing to clean up after a crash.</p>
+</div>
+
+<div class="card">
+  <h3>Rollback</h3>
+  <ul>
+    <li><strong>Worktree delete</strong> &mdash; discards all changes instantly</li>
+    <li><strong>SHA reset</strong> &mdash; captured before implementation, stored in state file. <code>git reset --hard &lt;rollbackSHA&gt;</code></li>
+    <li><strong>User abort</strong> &mdash; always available, state preserved for later resume</li>
+  </ul>
+</div>
+
+<!-- ─── SKILLS USED ────────────────────────────────────── -->
+
+<h2>Skills Used</h2>
+
+<table>
+  <tr><th>Skill</th><th>Phase</th><th>Purpose</th></tr>
+  <tr><td><code>superpowers:brainstorming</code></td><td>1</td><td>Explore intent, clarify requirements, produce design doc</td></tr>
+  <tr><td><code>superpowers:writing-plans</code></td><td>3</td><td>Write bite-sized implementation plan with TDD steps</td></tr>
+  <tr><td><code>superpowers:using-git-worktrees</code></td><td>4</td><td>Create isolated workspace on feature branch</td></tr>
+  <tr><td><code>superpowers:test-driven-development</code></td><td>5</td><td>Red-green-refactor TDD discipline</td></tr>
+  <tr><td><code>superpowers:subagent-driven-development</code></td><td>5</td><td>Dispatch fresh subagent per task</td></tr>
+  <tr><td><code>superpowers:executing-plans</code></td><td>5</td><td>Sequential plan execution (fallback)</td></tr>
+  <tr><td><code>superpowers:verification-before-completion</code></td><td>6</td><td>Evidence before claims &mdash; run all tests</td></tr>
+  <tr><td><code>superpowers:systematic-debugging</code></td><td>6</td><td>Root cause analysis before fixes</td></tr>
+  <tr><td><code>maestro:review-code</code></td><td>7</td><td>Structured severity-classified code review</td></tr>
+  <tr><td><code>superpowers:requesting-code-review</code></td><td>7</td><td>Dispatch subagent reviewer (conditional on HIGH+)</td></tr>
+  <tr><td><code>superpowers:receiving-code-review</code></td><td>7</td><td>Process findings &mdash; verify, push back on false positives</td></tr>
+  <tr><td><code>maestro:security-audit</code></td><td>8</td><td>OWASP Top 10, auth flows, injection, secrets</td></tr>
+  <tr><td><code>maestro:a11y-audit</code></td><td>8</td><td>WCAG, ARIA, keyboard nav, contrast</td></tr>
+  <tr><td><code>maestro:perf-check</code></td><td>8</td><td>N+1 queries, re-renders, unbounded loops</td></tr>
+  <tr><td><code>verify</code></td><td>8</td><td>Run app, visually confirm feature works</td></tr>
+  <tr><td><code>llm-council</code></td><td>2, 9</td><td>5-advisor council with peer review + synthesis</td></tr>
+  <tr><td><code>superpowers:finishing-a-development-branch</code></td><td>11</td><td>Merge, PR, or cleanup</td></tr>
+</table>
+
+<!-- ─── PROS & CONS ────────────────────────────────────── -->
+
+<h2>Pros &amp; Cons</h2>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h3>Pros</h3>
+    <ul>
+      <li><strong>Proportional ceremony</strong> &mdash; trivial tasks skip everything; complex tasks get full pipeline</li>
+      <li><strong>Parallel execution</strong> &mdash; implementation, reviews, and audits run concurrently</li>
+      <li><strong>Adversarial review</strong> &mdash; HIGH+ findings pressure-tested; false positives eliminated</li>
+      <li><strong>Deterministic loops</strong> &mdash; JS <code>for</code> loops, not LLM-estimated counters</li>
+      <li><strong>Schema validation</strong> &mdash; agent responses validated via JSON Schema</li>
+      <li><strong>Resumable</strong> &mdash; state persisted to JSON; resume on session interruption</li>
+      <li><strong>Rollback</strong> &mdash; SHA capture + worktree isolation = always recoverable</li>
+      <li><strong>Dynamic triage</strong> &mdash; reclassifies if task is bigger than expected</li>
+      <li><strong>15+ specialized skills</strong> &mdash; each phase uses purpose-built tooling</li>
+      <li><strong>Council quality gates</strong> &mdash; multi-perspective adversarial review before shipping</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h3>Cons</h3>
+    <ul>
+      <li><strong>Token cost</strong> &mdash; COMPLEX runs can exceed 250K tokens with councils</li>
+      <li><strong>Context window pressure</strong> &mdash; long pipelines may trigger compaction, losing earlier context</li>
+      <li><strong>No user interaction during Workflow</strong> &mdash; if implementation needs clarification, agent returns BLOCKED</li>
+      <li><strong>Worktree + monorepo friction</strong> &mdash; may need <code>npm install</code> in worktree</li>
+      <li><strong>Council is same-model</strong> &mdash; 5 advisors are the same LLM with different prompts, not different models</li>
+      <li><strong>Token estimates are advisory</strong> &mdash; no runtime counter available</li>
+      <li><strong>Requires test infrastructure</strong> &mdash; TDD phases need a working test framework</li>
+      <li><strong>Two files to maintain</strong> &mdash; SKILL.md + workflow JS script</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ─── DESIGN HISTORY ─────────────────────────────────── -->
+
+<h2>Design History</h2>
+
+<p>This command was iteratively designed through 4 LLM Council reviews, each finding issues and driving improvements.</p>
+
+<div class="timeline">
+  <div class="timeline-item done">
+    <strong>v1 &mdash; Initial Design</strong>
+    <p>11 phases, 2 mandatory councils, full pipeline always, TDD mandatory. <strong>Council found:</strong> over-engineered &mdash; no triage, no graduated remediation, overkill for solo dev.</p>
+  </div>
+  <div class="timeline-item done">
+    <strong>v2 &mdash; Added Triage</strong>
+    <p>Magnitude-aware triage (trivial/standard/complex), conditional phases, advisory cost estimates. <strong>Council found:</strong> triage is static (no re-evaluation), no loop counters, token budget unenforceable.</p>
+  </div>
+  <div class="timeline-item done">
+    <strong>v3 &mdash; Added Persistence + Loops</strong>
+    <p>Dynamic triage, pipeline state persistence, remediation loop counters, conditional dual review, rollback SHA in state file. <strong>Council found:</strong> remediation duplicated 3x, state file in wrong location, shell variable doesn't persist.</p>
+  </div>
+  <div class="timeline-item done">
+    <strong>v4 &mdash; Stabilized + Compressed</strong>
+    <p>Deduplicated remediation, fixed state persistence, honest about token counter limitation. Compressed from 666 to 151 lines. <strong>Council found:</strong> ready to test. "Stop reviewing, start using."</p>
+  </div>
+  <div class="timeline-item done">
+    <strong>v5 &mdash; Hybrid Architecture</strong>
+    <p>Switched Phases 5-8 from sequential Skills to parallel Workflow JS. Added adversarial verify, integration agent, deterministic loops. Empirically tested on TRIVIAL task.</p>
+  </div>
+  <div class="timeline-item done">
+    <strong>v5.2 (current) &mdash; Handoff &amp; Resume</strong>
+    <p>Added <code>HANDOFF.md</code>: a human-readable context snapshot in the project root, written at Phase 0 and refreshed every phase, so a <code>/clear</code> or a new session does not lose the goal, the dead ends, or the next step. Phase 0 gained <strong>Step 0a</strong>, an unconditional resume check that runs before anything else, plus a <code>SessionStart</code> hook that surfaces the file automatically. Project root is now resolved explicitly rather than assumed to be the launch directory. Concurrent sessions in the same directory are detected via a live-pid check instead of lock files.</p>
+  </div>
+</div>
+
+<!-- ─── QUICK REFERENCE ────────────────────────────────── -->
+
+<h2>Quick Reference</h2>
+
+<table>
+  <tr><th>Aspect</th><th>TRIVIAL</th><th>STANDARD</th><th>COMPLEX</th></tr>
+  <tr><td>Phases</td><td>6</td><td>11</td><td>12</td></tr>
+  <tr><td>TDD</td><td>Optional</td><td>Mandatory</td><td>Mandatory</td></tr>
+  <tr><td>Councils</td><td>0</td><td>1 (ship)</td><td>2 (design + ship)</td></tr>
+  <tr><td>Worktree</td><td>No</td><td>Yes</td><td>Yes</td></tr>
+  <tr><td>Audits</td><td>None</td><td>By file type</td><td>By file type</td></tr>
+  <tr><td>Workflow</td><td>No (inline)</td><td>Yes (parallel)</td><td>Yes (parallel)</td></tr>
+  <tr><td>Est. tokens</td><td>~20K</td><td>~120K</td><td>~250K+</td></tr>
+  <tr><td>Est. time</td><td>1-2 min</td><td>10-20 min</td><td>30-60 min</td></tr>
+  <tr><td><code>HANDOFF.md</code></td><td colspan="3">Always &mdash; written at Phase 0, refreshed every phase, kept after completion</td></tr>
+</table>
+
+<footer>
+  /dev command &mdash; v5.2 (Handoff &amp; Resume) &mdash; Last updated: 2026-08-03 &mdash; Built through 4 LLM Council reviews
+</footer>
+
+</body>
+</html>
