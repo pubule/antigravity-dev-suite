@@ -1,0 +1,17 @@
+{
+  "name": "dev",
+  "description": "Magnitude-aware SDLC pipeline for Claude Code with automated gates, parallel workflows, and resilience engineering",
+  "version": "1.0.0",
+  "author": {
+    "name": "Fabio Stocco"
+  },
+  "license": "MIT",
+  "keywords": [
+    "sdlc",
+    "pipeline",
+    "dev",
+    "workflows",
+    "tdd",
+    "code-review"
+  ]
+}

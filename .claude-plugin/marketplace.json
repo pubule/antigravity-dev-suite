@@ -1,14 +1,15 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "antigravity-dev-suite",
-  "description": "Enterprise Claude Opus 5.5 Coding Standard, ASD-STE100 & Cross-Platform Suite for Antigravity and Claude Code",
+  "name": "dev-pipeline",
+  "description": "Magnitude-aware SDLC pipeline for Claude Code with automated gates and parallel workflows",
   "owner": {
     "name": "Fabio Stocco"
   },
   "plugins": [
     {
-      "name": "antigravity-dev-suite",
-      "description": "Enterprise Claude Opus 5.5 Coding Standard, ASD-STE100 Technical Communication & Cross-Platform Suite: Brainstorming, Planning, Strict TDD, Self-Healing Auto-Debug, Adversarial Code Review, Safe Refactoring, Pre-Commit Verification, Visual QA, Security Audit, Performance Benchmarking, and Portable Session Handoff.",
+      "name": "dev",
+      "description": "Magnitude-aware SDLC pipeline for Claude Code",
+      "version": "1.0.0",
       "source": "./",
       "category": "productivity"
     }

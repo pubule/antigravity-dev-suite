@@ -1,27 +1,20 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Temporary Visual QA Artifacts
-.visual_qa_artifacts/
-/tmp/agy_visual_qa/
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-
-# OS artifacts
-.DS_Store
-Thumbs.db
-
-# Critic cache
-.agy_cache/
-
-# Session scratch
+# Session and runtime scratch
 HANDOFF.md
 HANDOFF.prev.md
 .dev-pipeline-state.json
+docs/superpowers/plans/
+docs/superpowers/specs/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Python / IDE
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+.idea/
