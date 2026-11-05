@@ -576,6 +576,7 @@ node &lt;skill_dir&gt;/dev-trace.js export     # OTLP/JSON for Jaeger, Phoenix, 
     <li>Every debug, remediation, NO-GO and resume step starts from <code>dev-trace.js failures</code> and cites the verbatim error.</li>
     <li><strong>Stop check</strong>: a test, build or lint command that failed and was never re-run green blocks the stop once.</li>
     <li>Ship Council gets the trace summary. Phase 11 reports tool calls, failures and unresolved failures.</li>
+    <li><strong>Gate GA (IS_AGENTIC)</strong>: if the tool you build calls an AI (SDK or <code>-p</code> CLI), <code>/dev</code> asks you which reasoning, metrics, traces and failure data you want to inspect (A full / B choose / C minimal / D none). The Stop hook blocks until you have answered.</li>
     <li><strong>Gate G2.5c (IS_AGENTIC)</strong>: code that calls an LLM (SDK or headless CLI subprocess such as <code>claude -p</code>, <code>gemini -p</code>, <code>agy -p</code>) must emit run, LLM-call, tool-call, decision-step and error spans, verified with a real run.</li>
   </ul>
 </div>

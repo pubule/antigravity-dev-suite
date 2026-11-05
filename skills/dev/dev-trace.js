@@ -755,6 +755,77 @@ function stopGate(input, dir, sid) {
   };
 }
 
+// ─── agentic code detection (the code being BUILT calls an AI) ──────
+
+const SKIP_FILE_RE = /(^|\/)(node_modules|vendor|dist|build|\.git)\/|\.(md|mdx|txt|rst|html?|lock|svg|png|jpe?g|gif|pdf)$|(package-lock|yarn\.lock|pnpm-lock)/i;
+const AI_SPAWN_RE = /["'`](claude|gemini|agy|antigravity|codex|cursor-agent|qwen|opencode|ollama)["'`]\s*,\s*\[?\s*["'`](-p|--print|--prompt|exec|run)["'`]/;
+const AI_CMD_STRING_RE = /\b(claude|gemini|agy|antigravity|codex|cursor-agent|qwen)\s+(?:[^\n"'`]*\s)?(-p|--print|--prompt|exec)\b/;
+const AI_SDK_RE = new RegExp([
+  String.raw`(?:from\s+|require\(\s*|import\(\s*|import\s+)["'](?:@anthropic-ai\/sdk|@anthropic-ai\/claude-agent-sdk|@anthropic-ai\/claude-code|openai|@openai\/agents|@google\/genai|@google\/generative-ai|@google-cloud\/vertexai|ai|@ai-sdk\/[\w-]+|langchain|@langchain\/[\w-]+|llamaindex|ollama|@mistralai\/mistralai|cohere-ai|groq-sdk)(?:\/[\w-]*)?["']`,
+  String.raw`^\s*(?:import|from)\s+(?:anthropic|claude_agent_sdk|claude_code_sdk|openai|google\.genai|google\.generativeai|vertexai|langchain\w*|langgraph|llama_index|litellm|ollama|mistralai|cohere|groq|dspy|crewai|autogen\w*|pydantic_ai)\b`,
+  String.raw`"github\.com\/(?:anthropics\/anthropic-sdk-go|openai\/openai-go|google\/generative-ai-go|tmc\/langchaingo)`,
+].join('|'));
+
+function git(root, args) {
+  const r = require('child_process').spawnSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 8000 });
+  return r.status === 0 ? r.stdout : '';
+}
+
+/** Lines added since `base` (plus untracked files) that call an AI via SDK or headless CLI. */
+function scanAgenticCode(root, base) {
+  const hits = [];
+  const check = (file, lineNo, text) => {
+    if (hits.length >= 20 || SKIP_FILE_RE.test(file)) return;
+    let kind = null;
+    if (AI_SDK_RE.test(text)) kind = 'sdk';
+    else if (AI_SPAWN_RE.test(text) || AI_CMD_STRING_RE.test(text) || detectAiCalls(text).length) kind = 'cli';
+    if (kind) hits.push({ file, line: lineNo, kind, text: clip(redact(text.trim()), 160) });
+  };
+  const diff = git(root, ['diff', '-U0', '--no-color', '--no-ext-diff', base || 'HEAD', '--']);
+  let file = null;
+  let lineNo = 0;
+  for (const l of diff.split('\n')) {
+    if (l.startsWith('+++ ')) { file = l.slice(4).replace(/^b\//, ''); continue; }
+    const h = l.match(/^@@ -\S+ \+(\d+)/);
+    if (h) { lineNo = Number(h[1]); continue; }
+    if (file && l.startsWith('+')) { check(file, lineNo, l.slice(1)); lineNo++; }
+  }
+  for (const f of git(root, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean).slice(0, 200)) {
+    if (SKIP_FILE_RE.test(f)) continue;
+    try {
+      const full = path.join(root, f);
+      if (fs.statSync(full).size > 512 * 1024) continue;
+      fs.readFileSync(full, 'utf8').split('\n').forEach((t, i) => check(f, i + 1, t));
+    } catch { /* unreadable */ }
+  }
+  return hits;
+}
+
+/**
+ * While a pipeline is active: if the code being built calls an AI (SDK or headless
+ * CLI) and the user has not been asked the AI Observability question, block once
+ * per turn until `agentObservability.decision` is recorded in the state file.
+ */
+function agenticGate(input) {
+  if (process.env.DEV_TRACE_GATE === '0' || input.stop_hook_active) return null;
+  const sf = findPipelineState(input.cwd);
+  if (!sf) return null;
+  const state = readJson(sf, {}) || {};
+  const ao = state.agentObservability;
+  if (ao && ao.decision) return null;
+  const hits = scanAgenticCode(path.dirname(sf), state.rollbackSHA);
+  if (!hits.length) return null;
+  return {
+    decision: 'block',
+    reason: [
+      `dev-trace: the code being built calls an AI (${[...new Set(hits.map((h) => h.kind === 'sdk' ? 'SDK' : 'headless CLI'))].join(' + ')}), but the user has not chosen its AI observability yet:`,
+      ...hits.slice(0, 8).map((h) => `- ${h.file}:${h.line}  ${h.text}`),
+      'Set isAgentic: true and ASK THE USER the AI Observability Proposal (SKILL.md §AI Observability Proposal): reasoning capture, metrics, tracing, failures, how they will inspect it.',
+      'Record their answer as agentObservability: { decision, items, answeredBy: "user" } in .dev-pipeline-state.json. Do not answer it yourself. If this is a false positive, ask the user to confirm and record decision "not-applicable".',
+    ].join('\n'),
+  };
+}
+
 // ─── retention ──────────────────────────────────────────────────────
 
 function prune(dir) {
@@ -840,7 +911,11 @@ function handleHook(input) {
       const sf = findPipelineState(cwd);
       if (sf) recordPipelineState(dir, sid, sf);
       append(dir, sid, { ev: 'turn.end', retry: input.stop_hook_active || undefined });
-      return stopGate(input, dir, sid);
+      const verdict = stopGate(input, dir, sid);
+      if (verdict) return verdict;
+      const agentic = agenticGate(input);
+      if (agentic) append(dir, sid, { ev: 'gate', gate: 'trace.agentic-observability-undecided', value: false });
+      return agentic;
     }
     case 'SessionEnd':
       ingestTranscript(dir, sid, input.transcript_path);
@@ -1186,7 +1261,7 @@ function cli(argv) {
 module.exports = {
   handleHook, analyze, readEvents, summaryData, toOtlp, redact, summarizeInput, traceDir, gitCommonDir,
   unresolvedVerificationFailures, ingestTranscript, findDevTrace, sessionFile, VERIFY_RE,
-  detectAiCalls, parseAiOutput,
+  detectAiCalls, parseAiOutput, scanAgenticCode,
 };
 
 if (require.main === module) {

@@ -329,3 +329,42 @@ test('nested AI calls are recorded, linked to the child trace, and unstructured 
   assert.match(r.stdout, /child trace: node dev-trace.js summary child-9\n/);
   assert.match(r.stdout, /aider[\s\S]*internals not traced/);
 });
+
+test('agentic code in the diff blocks Stop until the user has chosen AI observability', () => {
+  const sb = sandbox();
+  fs.rmSync(path.join(sb.repo, '.git'), { recursive: true, force: true });
+  const g = (args) => spawnSync('git', args, { cwd: sb.repo, encoding: 'utf8' });
+  g(['init', '-q']);
+  g(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'base']);
+  const sha = g(['rev-parse', 'HEAD']).stdout.trim();
+  const sf = path.join(sb.repo, '.dev-pipeline-state.json');
+  fs.writeFileSync(sf, JSON.stringify({ currentPhase: 5, rollbackSHA: sha }));
+  fs.mkdirSync(path.join(sb.repo, 'src'));
+  fs.writeFileSync(path.join(sb.repo, 'src', 'util.js'), 'module.exports = (a) => a + 1\n');
+  fs.writeFileSync(path.join(sb.repo, 'README.md'), 'run `claude -p "x"` to try\n');
+  assert.strictEqual(hook(sb, 'Stop', {}), null, 'no AI calls in code (docs are ignored)');
+
+  fs.writeFileSync(path.join(sb.repo, 'src', 'review.js'), "const { spawn } = require('child_process')\nspawn('agy', ['-p', prompt, '--output-format', 'json'])\n");
+  const block = hook(sb, 'Stop', {});
+  assert.strictEqual(block.decision, 'block');
+  assert.match(block.reason, /src\/review\.js:2/);
+  assert.match(block.reason, /ASK THE USER/);
+  assert.strictEqual(hook(sb, 'Stop', { stop_hook_active: true }), null, 'once per turn');
+
+  fs.writeFileSync(sf, JSON.stringify({ currentPhase: 5, rollbackSHA: sha, isAgentic: true, agentObservability: { decision: 'full', answeredBy: 'user' } }));
+  assert.strictEqual(hook(sb, 'Stop', {}), null, 'decision recorded → pass');
+});
+
+test('SDK and CLI detection in source lines', () => {
+  const sb = sandbox();
+  const g = (args) => spawnSync('git', args, { cwd: sb.repo, encoding: 'utf8' });
+  fs.rmSync(path.join(sb.repo, '.git'), { recursive: true, force: true });
+  g(['init', '-q']);
+  g(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'base']);
+  fs.writeFileSync(path.join(sb.repo, 'a.py'), 'import anthropic\nfrom openai import OpenAI\nx = 1\n');
+  fs.writeFileSync(path.join(sb.repo, 'b.ts'), "import { generateText } from 'ai'\nimport Anthropic from '@anthropic-ai/sdk'\n");
+  fs.writeFileSync(path.join(sb.repo, 'c.sh'), 'gemini -p "$PROMPT" > out.txt\n');
+  fs.writeFileSync(path.join(sb.repo, 'd.py'), 'subprocess.run(["claude", "-p", q, "--output-format", "json"], timeout=600)\n');
+  const hits = T.scanAgenticCode(sb.repo, 'HEAD').map((h) => `${h.file}:${h.line}:${h.kind}`).sort();
+  assert.deepStrictEqual(hits, ['a.py:1:sdk', 'a.py:2:sdk', 'b.ts:1:sdk', 'b.ts:2:sdk', 'c.sh:1:cli', 'd.py:1:cli']);
+});

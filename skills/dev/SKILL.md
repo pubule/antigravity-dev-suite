@@ -41,7 +41,8 @@ Do NOT proceed to the next phase until the current phase is complete. Before ent
 | G2.6 | STANDARD+ with HAS_FRONTEND: UI Quality Gate passed (detect clean, audit score >= 14/20, no P0 findings) | Phase 9 (Ship Council) |
 | G3 | STANDARD+: `Skill(llm-council)` invoked for ship review AND verdict is GO | Phase 10 (Docs) |
 | GT | ALL: production tracing is recording this session (`dev-trace.js doctor` → OK), or the user explicitly accepted running untraced | Phase 1 (any phase after Triage) |
-| G2.5c | IS_AGENTIC: Agent Tracing checklist passed (every LLM call, tool call, decision step and failure of the code being built emits a trace span) | Phase 8.6 (UI Quality Gate) |
+| GA | IS_AGENTIC: the user answered the AI Observability Proposal (`state.agentObservability.decision` set, `answeredBy: "user"`) | Phase 3 (Plan) — and, on the TRIVIAL path, any implementation step |
+| G2.5c | IS_AGENTIC: Agent Tracing checklist passed for the items the user chose (every LLM call, tool call, decision step and failure of the code being built emits a trace span) | Phase 8.6 (UI Quality Gate) |
 
 If a gate check fails, STOP and execute the missing phase. Do NOT skip it.
 Do NOT rationalize skipping with "this is straightforward" or "the design is clear."
@@ -67,6 +68,7 @@ BEFORE entering Phase N:
    - G2.6: if N >= 9 && HAS_FRONTEND → state.uiQualityGate.passed must be true
    - G3: if N >= 10 && STANDARD+ → state.gates.shipCouncilGO must be true
    - GT: if N >= 1 → state.tracing.active must be true OR state.tracing.waivedBy must be set
+   - GA: if N >= 3 && IS_AGENTIC → state.agentObservability.decision must be set by the user
    - G2.5c: if N >= 8.6 && IS_AGENTIC → state.agentTraceGate.passed must be true
 4. WRITE to state file: { currentPhase: N, enteredAt: <now> }
 5. ANNOUNCE to user: "▶ Phase N: [name] — prerequisites verified ✓"
@@ -148,8 +150,9 @@ When IS_GREENFIELD:
 - **Headless AI CLI as a subprocess:** `claude -p`, `gemini -p`, `agy -p`, `codex exec`, `cursor-agent -p`, `ollama run`, etc., from code, scripts, Makefiles, CI jobs or git hooks.
 - **Agent constructs:** a tool-calling / agent loop, sub-agent orchestration, retrieval for a model, or tool / MCP server definitions for a model.
 
-Grep the diff for SDK imports and for these CLI names in `spawn`/`exec`/`subprocess`/shell lines. When in doubt, set it. When IS_AGENTIC:
-- Phase 1 design doc MUST contain an **Agent Tracing** section (§Agent Tracing Design).
+Grep the diff for SDK imports and for these CLI names in `spawn`/`exec`/`subprocess`/shell lines. When in doubt, set it. The Stop hook also scans the diff (and untracked files) on every turn: if it finds SDK imports or headless AI CLI calls (`claude -p`, `gemini -p`, `agy -p`, `codex exec`, ...) while `agentObservability.decision` is unset, it blocks and tells you to ask — so IS_AGENTIC detected mid-implementation still reaches the user. When IS_AGENTIC:
+- **ASK THE USER the AI Observability Proposal** (§AI Observability Proposal) before planning — or before implementing on the TRIVIAL path. Gate GA. Never decide it for them.
+- Phase 1 design doc MUST contain an **Agent Tracing** section (§Agent Tracing Design) covering what the user chose.
 - Phase 3 plan MUST contain a **Tracing** task group (tracer setup first, then spans per LLM call / tool call / step, then failure-path tests that assert the error span exists).
 - Phase 8.5 runs the **Agent Tracing checklist** as blocking sub-gate G2.5c.
 
@@ -250,7 +253,7 @@ Compare the recorded task against the user's current request. "Same task" includ
 2. Classify magnitude: **TRIVIAL** (config/typo/1-file/deps/style) | **STANDARD** (feature/multi-file/bug/API) | **COMPLEX** (architecture/new module/cross-cutting/security-sensitive).
 2b. **Set `IS_GREENFIELD`** (see §IS_GREENFIELD trigger). Announce it: "🧯 Greenfield detected — error handling & logging will be designed in Phase 1 and verified at gate G2.5b." Store in state as `isGreenfield`.
    - **IS_GREENFIELD + TRIVIAL is a contradiction.** A new tool/app/module is never trivial. Escalate to STANDARD (upward reclassification is the default) and say why. If the user insists on TRIVIAL, keep the flag: the trivial path still owes the proportional Error & Logging proposal (§Resilience & Observability Design, minimal subset) inline before implementing, and G2.5b still applies.
-2c. **Set `IS_AGENTIC`** (see §IS_AGENTIC trigger). Announce it: "🔭 Agentic code detected — LLM calls, tool calls, decisions and failures will be traced and verified at gate G2.5c." Store in state as `isAgentic`. IS_AGENTIC implies IS_GREENFIELD for the touched surface.
+2c. **Set `IS_AGENTIC`** (see §IS_AGENTIC trigger). Announce it: "🔭 Agentic code detected — this tool will call an AI. I'll ask you how much of its reasoning, metrics and tracing you want to be able to inspect." Store in state as `isAgentic`. IS_AGENTIC implies IS_GREENFIELD for the touched surface. If magnitude is TRIVIAL, ask the AI Observability Proposal right here, before step 3.
 3. Show classification + active phases + advisory cost estimate (~20K trivial / ~120K standard / ~250K+ complex). Token estimates are advisory only — Claude Code has no runtime token counter.
 4. Ask user: proceed / override magnitude / abort.
 5. Create TaskCreate entries for active phases.
@@ -325,9 +328,32 @@ Answer every line. "Not needed" is a valid answer **only if written down with a 
 
 **Proportionality:** a one-shot script needs points 2, 4, 8, 9, 10 — not all 17 points. A service with external integrations needs all 17. Propose the subset proportional to magnitude and state it explicitly.
 
+### AI Observability Proposal (IS_AGENTIC — ask the user, gate GA)
+
+When the tool being built calls an AI (SDK or `claude -p` / `gemini -p` / `agy -p` / `codex exec` ...), the user decides how much of the AI's behaviour they want to be able to inspect. Present this as an explicit question — one message, with the options and what each costs — not as a silent default. Recommend A.
+
+> 🔭 This tool calls an AI (`<where: file / CLI / SDK>`). How much do you want to be able to see of what the AI does inside it?
+>
+> | | Reasoning | Metrics | Traces | Failures | How you inspect it |
+> |---|---|---|---|---|---|
+> | **A. Full (recommended)** | rationale / plan per step, thinking summary when the model exposes it, why the loop stopped | latency, tokens (in/out/thinking/cache), cost, turns, tool calls + success rate, retries, error rate, timeouts | run id + span per LLM call, per tool call, per step; child session id for CLI runs | error span with type + verbatim message for every failure path; non-SUCCESS status of CLI runs | local report command (`<tool> trace <run-id>` or a JSONL run log) + optional OTLP export (Jaeger / Phoenix / Langfuse) |
+> | **B. Choose** | pick from the A columns | | | | |
+> | **C. Minimal** | — | latency, tokens, exit status | run id | error + stderr tail | log lines |
+> | **D. None** | — | — | — | (exit code + timeout still mandatory: G2.5b) | — |
+>
+> Cost of A: ~1 module (tracer + redaction + report) and a few tests; tracing can be switched off by config.
+
+Record the answer verbatim in `.dev-pipeline-state.json`:
+```json
+{ "agentObservability": { "decision": "A|B|C|D|not-applicable", "items": ["reasoning", "metrics", "traces", "failures", "report", "otlp"], "answeredBy": "user", "askedAt": "<ISO>" } }
+```
+and under `Key decisions` in `HANDOFF.md` (D also under `Waived / deferred`). The chosen items become requirements: Phase 1 designs them (§Agent Tracing Design), Phase 3 plans them as a **Tracing** task group, G2.5c verifies them with a real run, and the Knowledge Quiz asks about them. D never waives the resilience basics for AI CLI subprocesses (timeout, exit/status check, stderr capture), which stay CRITICAL in G2.5b/G2.5c.
+
+If the user already answered this for the same tool in an earlier pipeline (see `HANDOFF.md` Key decisions or project memory), show the previous choice and ask to confirm rather than re-asking from scratch.
+
 ### Agent Tracing Design (IS_AGENTIC)
 
-Code that drives an LLM must be diagnosable the same way this pipeline is: from production traces that reveal tool calls, reasoning steps, latency and failures. Answer every line in the Phase 1 design doc:
+Code that drives an LLM must be diagnosable the same way this pipeline is: from production traces that reveal tool calls, reasoning steps, latency and failures. Answer every line covered by the user's AI Observability choice in the Phase 1 design doc (decision A: all; B: the chosen items; C: 2, 3 latency/tokens, 6, 10; D: 10's timeout/status/stderr only):
 
 1. **Tracer** — the project's existing one (OpenTelemetry, LangSmith, Langfuse, Phoenix, Braintrust, ...) or OpenTelemetry with the GenAI semantic conventions (`gen_ai.*` attributes). Exporter configurable by env; console/file exporter for local runs, in-memory exporter in tests.
 2. **Run span** — one root span per agent run / conversation turn with a run id that is returned to the caller and written to logs, so a user report can be mapped to its trace.
@@ -372,7 +398,7 @@ Council the design for implementation-readiness (soundness, completeness, scope,
 ### TRIVIAL path (no workflow)
 
 1. Capture rollback SHA → store in `.dev-pipeline-state.json`.
-2. Implement the change directly (no plan, no subagents).
+2. Implement the change directly (no plan, no subagents). If the change makes the code call an AI (SDK or headless CLI), stop first and ask the AI Observability Proposal (gate GA) — the Stop hook blocks until the answer is recorded.
 3. Run verification: full test suite or build fallback. On failure: **diagnose from evidence** — read the verbatim error (`dev-trace.js failures` shows it with the reasoning that led to the call), state the root cause, fix, then re-run the SAME command until green. The Stop hook blocks once if a failed verification command was never re-run green.
 4. Security audit (conditional): if changed files match HAS_FRONTEND or HAS_API, run `maestro:security-audit` on changed files. Fix HIGH+ findings before proceeding.
 **Exit:** Change implemented, tests/build passing, security checked (if applicable).
@@ -471,7 +497,7 @@ Gate G2.5b passes when zero CRITICAL remain and every WARNING is fixed or explic
 
 ### Step 2c: Agent Tracing checklist (IS_AGENTIC — blocking)
 
-Verify the implemented code against §Agent Tracing Design. Read the changed files AND run the code once (test or example run) with the tracer pointed at a local sink (console/file exporter, in-memory exporter in tests): a checklist answered from the source alone is not verified.
+Verify the implemented code against §Agent Tracing Design, scoped to the items in `state.agentObservability` (rows outside the user's choice are N/A, except the AI CLI timeout / exit-status / stderr rows, which always apply). Read the changed files AND run the code once (test or example run) with the tracer pointed at a local sink (console/file exporter, in-memory exporter in tests): a checklist answered from the source alone is not verified.
 
 | Gap | Severity |
 |---|---|
