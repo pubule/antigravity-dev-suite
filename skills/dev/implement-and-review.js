@@ -48,10 +48,41 @@ const VERDICT_SCHEMA = {
   required: ['refuted']
 }
 
-// ─── Phase: IMPLEMENT ───────────────────────────────────────────────
-phase('Implement')
+// ─── Tracing ─────────────────────────────────────────────────────────
+// Every agent call is timed and its outcome recorded. The spans travel back in the
+// result as `devTrace`; the dev-trace PostToolUse hook ingests them into the session
+// trace, so `dev-trace.js summary` shows which workflow agent was slow or failed.
+const devTrace = { version: 1, spans: [] }
+let currentPhase = null
+const now = () => Date.now()
 
-const plan = await agent(
+function enterPhase(name) {
+  currentPhase = name
+  phase(name)
+}
+
+async function tracedAgent(prompt, opts = {}) {
+  const span = { label: opts.label || 'agent', phase: opts.phase || currentPhase, start: now() }
+  devTrace.spans.push(span)
+  try {
+    const result = await agent(prompt, opts)
+    span.end = now()
+    span.ok = result !== null && result !== undefined
+    if (!span.ok) span.error = 'agent returned no result'
+    else if (result && result.passed === false) span.error = `reported failure: ${(result.failures || []).slice(0, 5).join(' | ')}`.slice(0, 500)
+    return result
+  } catch (e) {
+    span.end = now()
+    span.ok = false
+    span.error = String((e && e.message) || e).slice(0, 500)
+    throw e
+  }
+}
+
+// ─── Phase: IMPLEMENT ───────────────────────────────────────────────
+enterPhase('Implement')
+
+const plan = await tracedAgent(
   `Read the implementation plan at ${args.planPath}. Extract all tasks as a JSON array. Each task needs an id, description, and list of files it will touch.`,
   {
     label: 'parse-plan',
@@ -85,7 +116,7 @@ const tddInstruction = args.tddRequired
   : 'Tests are optional for this task.'
 
 const implemented = await parallel(tasks.map(task => () =>
-  agent(
+  tracedAgent(
     `Implement this task:\n\nTask: ${task.description}\nFiles: ${(task.files || []).join(', ') || 'determine from task'}\n\n${tddInstruction}\n\nCommit when done with a clear message.`,
     {
       label: `impl:${task.id}`,
@@ -99,9 +130,9 @@ const successfulImpls = implemented.filter(Boolean)
 log(`${successfulImpls.length}/${tasks.length} tasks implemented`)
 
 // ─── Phase: INTEGRATE ───────────────────────────────────────────────
-phase('Integrate')
+enterPhase('Integrate')
 
-const mergeResult = await agent(
+const mergeResult = await tracedAgent(
   `${successfulImpls.length} parallel agents implemented tasks in isolated worktrees.
 Merge all changes into the working tree. Resolve any merge conflicts — prefer the more complete implementation.
 After merging, run a quick syntax check to verify nothing is broken.
@@ -120,19 +151,20 @@ Report: merged (boolean), conflicts (list of resolved conflicts).`,
 )
 
 if (!mergeResult.merged) {
-  return { status: 'FAILED', phase: 'integrate', details: 'Failed to merge parallel implementations' }
+  return { status: 'FAILED', phase: 'integrate', details: 'Failed to merge parallel implementations', devTrace }
 }
 if ((mergeResult.conflicts || []).length > 0) {
   log(`Resolved ${mergeResult.conflicts.length} merge conflicts`)
 }
 
 // ─── Phase: VERIFY (max 3 debug cycles) ─────────────────────────────
-phase('Verify')
+enterPhase('Verify')
 
 let verifyPassed = false
+let lastFailures = []
 for (let attempt = 0; attempt < 3; attempt++) {
-  const result = await agent(
-    'Run the full project test suite. If no test script exists, fall back to build verification. Report pass/fail with failure details.',
+  const result = await tracedAgent(
+    'Run the full project test suite. If no test script exists, fall back to build verification. Report pass/fail. For each failure include the exact command you ran and the verbatim error lines (test name, assertion, file:line) - never a paraphrase.',
     { label: `verify-${attempt}`, schema: PASS_FAIL_SCHEMA }
   )
 
@@ -142,22 +174,23 @@ for (let attempt = 0; attempt < 3; attempt++) {
     break
   }
 
-  log(`Verification failed (attempt ${attempt + 1}): ${(result.failures || []).length} failures`)
+  lastFailures = result.failures || []
+  log(`Verification failed (attempt ${attempt + 1}): ${lastFailures.length} failures`)
 
-  await agent(
-    `Systematic debugging: find root cause of these failures and fix them. Root cause first, not symptoms.\n\nFailures:\n${(result.failures || ['unknown failures']).join('\n')}`,
+  await tracedAgent(
+    `Systematic debugging: find root cause of these failures and fix them. Root cause first, not symptoms.\nDo not guess: re-run the failing command, read the full error output (and the session trace via dev-trace.js failures if available), state the root cause with evidence, then fix. Re-run the SAME command to confirm.\n\nFailures:\n${(result.failures || ['unknown failures']).join('\n')}`,
     { label: `debug-${attempt}` }
   )
 }
 
 if (!verifyPassed) {
-  return { status: 'FAILED', phase: 'verify', details: 'Tests failing after 3 debug cycles' }
+  return { status: 'FAILED', phase: 'verify', details: 'Tests failing after 3 debug cycles', lastFailures, devTrace }
 }
 
 // ─── Phase: REVIEW (adversarial verify + graduated remediation) ──────
-phase('Review')
+enterPhase('Review')
 
-const maestroReview = await agent(
+const maestroReview = await tracedAgent(
   'Run a structured code review on all changed files. Classify each finding by severity: LOW, MEDIUM, HIGH, or CRITICAL. Be thorough.',
   { label: 'maestro-review', phase: 'Review', schema: FINDINGS_SCHEMA }
 )
@@ -166,7 +199,7 @@ let allFindings = maestroReview?.findings || []
 const hasHighFindings = allFindings.some(f => ['HIGH', 'CRITICAL'].includes(f.severity))
 
 if (hasHighFindings) {
-  const secondReview = await agent(
+  const secondReview = await tracedAgent(
     'Independent code review as second opinion. Focus on correctness, security, and architectural issues. Classify by severity.',
     { label: 'second-review', phase: 'Review', schema: FINDINGS_SCHEMA }
   )
@@ -181,7 +214,7 @@ if (highFindings.length > 0) {
   log(`Adversarial verify: ${highFindings.length} HIGH/CRITICAL findings`)
 
   const verdicts = await parallel(highFindings.map(f => () =>
-    agent(
+    tracedAgent(
       `Try to REFUTE this code review finding. Default to refuted=true if uncertain.\n\nFinding: ${f.description}\nFile: ${f.file || 'unknown'}\nSeverity: ${f.severity}\n\nCheck the actual code. Is this genuinely a problem, or is the reviewer wrong?`,
       { label: `adversarial:${f.file || 'unknown'}`, phase: 'Review', schema: VERDICT_SCHEMA }
     )
@@ -205,31 +238,31 @@ for (let cycle = 0; cycle < 3 && remainingHighFindings.length > 0; cycle++) {
 
   const lowMed = allFindings.filter(f => ['LOW', 'MEDIUM'].includes(f.severity))
   if (lowMed.length > 0) {
-    await agent(`Fix these LOW/MEDIUM findings inline:\n${JSON.stringify(lowMed, null, 2)}`, { label: `fix-lowmed-${cycle}` })
+    await tracedAgent(`Fix these LOW/MEDIUM findings inline:\n${JSON.stringify(lowMed, null, 2)}`, { label: `fix-lowmed-${cycle}` })
   }
 
   const high = remainingHighFindings.filter(f => f.severity === 'HIGH')
   if (high.length > 0) {
-    await agent(`Fix these HIGH findings:\n${JSON.stringify(high, null, 2)}`, { label: `fix-high-${cycle}` })
+    await tracedAgent(`Fix these HIGH findings:\n${JSON.stringify(high, null, 2)}`, { label: `fix-high-${cycle}` })
   }
 
   const critical = remainingHighFindings.filter(f => f.severity === 'CRITICAL')
   if (critical.length > 0) {
-    await agent(`Fix these CRITICAL findings. Amend the implementation if needed:\n${JSON.stringify(critical, null, 2)}`, { label: `fix-critical-${cycle}` })
+    await tracedAgent(`Fix these CRITICAL findings. Amend the implementation if needed:\n${JSON.stringify(critical, null, 2)}`, { label: `fix-critical-${cycle}` })
   }
 
   // Re-verify after fixes
-  const recheck = await agent(
+  const recheck = await tracedAgent(
     'Re-run full test suite after review fixes.',
     { label: `re-verify-${cycle}`, schema: PASS_FAIL_SCHEMA }
   )
   if (!recheck.passed) {
-    await agent('Debug and fix test failures introduced by review fixes.', { label: `re-debug-${cycle}` })
+    await tracedAgent('Debug and fix test failures introduced by review fixes.', { label: `re-debug-${cycle}` })
   }
 
   // Lightweight re-review
   if (high.length > 0 || critical.length > 0) {
-    const reReview = await agent(
+    const reReview = await tracedAgent(
       'Re-review only the files changed by the latest fixes. Report remaining HIGH/CRITICAL issues only.',
       { label: `re-review-${cycle}`, schema: FINDINGS_SCHEMA }
     )
@@ -240,23 +273,23 @@ for (let cycle = 0; cycle < 3 && remainingHighFindings.length > 0; cycle++) {
 }
 
 // ─── Phase: AUDIT (parallel conditional + remediation) ───────────────
-phase('Audit')
+enterPhase('Audit')
 
 const auditThunks = []
 if (args.auditTriggers?.security) {
-  auditThunks.push(() => agent(
+  auditThunks.push(() => tracedAgent(
     'Security audit: check auth flows, injection vectors, OWASP Top 10, secret handling, data exposure on all changed files.',
     { label: 'security-audit', phase: 'Audit', schema: FINDINGS_SCHEMA }
   ))
 }
 if (args.auditTriggers?.a11y) {
-  auditThunks.push(() => agent(
+  auditThunks.push(() => tracedAgent(
     'Accessibility audit: check WCAG compliance, ARIA usage, keyboard navigation, screen reader compatibility, color contrast.',
     { label: 'a11y-audit', phase: 'Audit', schema: FINDINGS_SCHEMA }
   ))
 }
 if (args.auditTriggers?.perf) {
-  auditThunks.push(() => agent(
+  auditThunks.push(() => tracedAgent(
     'Performance check: identify N+1 queries, unnecessary re-renders, unbounded loops, missing pagination, unoptimized I/O.',
     { label: 'perf-audit', phase: 'Audit', schema: FINDINGS_SCHEMA }
   ))
@@ -274,20 +307,20 @@ if (auditThunks.length > 0) {
   for (let auditCycle = 0; auditCycle < 3 && auditHighFindings.length > 0; auditCycle++) {
     log(`Audit remediation cycle ${auditCycle + 1}: ${auditHighFindings.length} findings`)
 
-    await agent(
+    await tracedAgent(
       `Fix these audit findings:\n${JSON.stringify(auditHighFindings, null, 2)}`,
       { label: `audit-fix-${auditCycle}` }
     )
 
-    const recheck = await agent(
+    const recheck = await tracedAgent(
       'Re-run full test suite after audit fixes.',
       { label: `audit-re-verify-${auditCycle}`, schema: PASS_FAIL_SCHEMA }
     )
     if (!recheck.passed) {
-      await agent('Debug and fix test failures from audit fixes.', { label: `audit-re-debug-${auditCycle}` })
+      await tracedAgent('Debug and fix test failures from audit fixes.', { label: `audit-re-debug-${auditCycle}` })
     }
 
-    const reAudit = await agent(
+    const reAudit = await tracedAgent(
       'Re-check previously failing audit areas only. Report remaining HIGH/CRITICAL.',
       { label: `re-audit-${auditCycle}`, schema: FINDINGS_SCHEMA }
     )
@@ -306,5 +339,6 @@ return {
   reviewFindings: allFindings,
   remainingHighFindings: remainingHighFindings.length,
   auditFindings,
-  mergeConflicts: mergeResult.conflicts || []
+  mergeConflicts: mergeResult.conflicts || [],
+  devTrace
 }

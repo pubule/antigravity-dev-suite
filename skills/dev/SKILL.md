@@ -1,6 +1,6 @@
 ---
 name: dev
-description: "Magnitude-aware SDLC pipeline. Classifies tasks as trivial/standard/complex, runs proportional ceremony. Graduated remediation, state persistence, rollback. On every invocation it first looks for HANDOFF.md / .dev-pipeline-state.json in the project root to resume interrupted work after a /clear or new session. Invoke: /dev or /dev <description>."
+description: "Magnitude-aware SDLC pipeline. Classifies tasks as trivial/standard/complex, runs proportional ceremony. Graduated remediation, state persistence, rollback, production tracing of every run (tool calls, reasoning, latency, failures). On every invocation it first looks for HANDOFF.md / .dev-pipeline-state.json in the project root to resume interrupted work after a /clear or new session. Invoke: /dev or /dev <description>."
 ---
 
 # /dev — Magnitude-Aware SDLC Pipeline
@@ -19,7 +19,7 @@ Single source of truth. Derive all skip/run decisions from this table.
 | 3. Plan | `superpowers:writing-plans` | skip | run | run |
 | 4. Worktree | `superpowers:using-git-worktrees` | skip | run | run |
 | 5-8. Implement+Verify+Review+Audit | `Workflow(implement-and-review.js)` — parallel agents, adversarial verify, deterministic loops | run (direct, no workflow) | run (workflow) | run (workflow) |
-| 8.5. Impeccable Quality Gate | Impeccable skills + Resilience & Observability check (see §Impeccable Quality Gate) | run | run | run |
+| 8.5. Impeccable Quality Gate | Impeccable skills + Resilience & Observability check + Agent Tracing check if IS_AGENTIC (see §Impeccable Quality Gate) | run | run | run |
 | 8.6. UI Quality Gate | `Skill(impeccable)` + `detect` CLI (see §UI Quality Gate) | run (detect only, if HAS_FRONTEND) | run (if HAS_FRONTEND) | run (if HAS_FRONTEND) |
 | 9. Ship Council | `llm-council` | skip | run | run |
 | 10. Docs | — | run | run | run |
@@ -40,6 +40,9 @@ Do NOT proceed to the next phase until the current phase is complete. Before ent
 | G2.5b | IS_GREENFIELD: Resilience & Observability checklist passed (no CRITICAL gaps in error handling / logging) | Phase 8.6 (UI Quality Gate) |
 | G2.6 | STANDARD+ with HAS_FRONTEND: UI Quality Gate passed (detect clean, audit score >= 14/20, no P0 findings) | Phase 9 (Ship Council) |
 | G3 | STANDARD+: `Skill(llm-council)` invoked for ship review AND verdict is GO | Phase 10 (Docs) |
+| GT | ALL: production tracing is recording this session (`dev-trace.js doctor` → OK), or the user explicitly accepted running untraced | Phase 1 (any phase after Triage) |
+| GA | IS_AGENTIC: the user answered the AI Observability Proposal (`state.agentObservability.decision` set, `answeredBy: "user"`) | Phase 3 (Plan) — and, on the TRIVIAL path, any implementation step |
+| G2.5c | IS_AGENTIC: Agent Tracing checklist passed for the items the user chose (every LLM call, tool call, decision step and failure of the code being built emits a trace span) | Phase 8.6 (UI Quality Gate) |
 
 If a gate check fails, STOP and execute the missing phase. Do NOT skip it.
 Do NOT rationalize skipping with "this is straightforward" or "the design is clear."
@@ -64,6 +67,9 @@ BEFORE entering Phase N:
    - G2.5b: if N >= 8.6 && IS_GREENFIELD → state.observabilityGate.passed must be true
    - G2.6: if N >= 9 && HAS_FRONTEND → state.uiQualityGate.passed must be true
    - G3: if N >= 10 && STANDARD+ → state.gates.shipCouncilGO must be true
+   - GT: if N >= 1 → state.tracing.active must be true OR state.tracing.waivedBy must be set
+   - GA: if N >= 3 && IS_AGENTIC → state.agentObservability.decision must be set by the user
+   - G2.5c: if N >= 8.6 && IS_AGENTIC → state.agentTraceGate.passed must be true
 4. WRITE to state file: { currentPhase: N, enteredAt: <now> }
 5. ANNOUNCE to user: "▶ Phase N: [name] — prerequisites verified ✓"
 ```
@@ -107,6 +113,10 @@ These are the EXACT rationalizations that cause phase skipping. If you catch you
 | "The happy path works, that's the feature" | The feature includes what happens when it doesn't. Failure paths get tests. |
 | "The library handles errors for me" | Verify it. Most clients default to no timeout and swallow nothing usefully. |
 | "I'll wrap everything in one try/catch at the top" | That's a crash log, not error handling. Boundaries are per §Resilience & Observability Design point 2. |
+| "I know why it failed" | You have a hypothesis. Run `dev-trace.js failures`, quote the verbatim error and the call that produced it, then fix. |
+| "The tests passed earlier, no need to re-run" | The trace shows the last run of each command. If the last run of the verification command is red, it is red. |
+| "Tracing is noise for this small task" | It costs nothing: hooks record it. Reading it costs one command. The `GT` gate applies to every magnitude. |
+| "It's an LLM feature, the model output is the log" | Model output is not a trace. An agent you can't trace is an agent you'll debug by guessing (G2.5c). |
 
 ---
 
@@ -135,9 +145,62 @@ When IS_GREENFIELD:
 - Phase 3 plan MUST contain an **Errors & Observability** task group.
 - Phase 8.5 runs the **Resilience & Observability checklist** as a blocking sub-gate (G2.5b).
 
+**IS_AGENTIC trigger:** set when the change adds or modifies code that calls an LLM in any form:
+- **SDK / HTTP API:** Anthropic, Claude Agent SDK, OpenAI, Google GenAI, Vercel AI SDK, LangChain/LangGraph, LlamaIndex, or direct HTTP calls to a model endpoint.
+- **Headless AI CLI as a subprocess:** `claude -p`, `gemini -p`, `agy -p`, `codex exec`, `cursor-agent -p`, `ollama run`, etc., from code, scripts, Makefiles, CI jobs or git hooks.
+- **Agent constructs:** a tool-calling / agent loop, sub-agent orchestration, retrieval for a model, or tool / MCP server definitions for a model.
+
+Grep the diff for SDK imports and for these CLI names in `spawn`/`exec`/`subprocess`/shell lines. When in doubt, set it. The Stop hook also scans the diff (and untracked files) on every turn: if it finds SDK imports or headless AI CLI calls (`claude -p`, `gemini -p`, `agy -p`, `codex exec`, ...) while `agentObservability.decision` is unset, it blocks and tells you to ask — so IS_AGENTIC detected mid-implementation still reaches the user. When IS_AGENTIC:
+- **ASK THE USER the AI Observability Proposal** (§AI Observability Proposal) before planning — or before implementing on the TRIVIAL path. Gate GA. Never decide it for them.
+- Phase 1 design doc MUST contain an **Agent Tracing** section (§Agent Tracing Design) covering what the user chose.
+- Phase 3 plan MUST contain a **Tracing** task group (tracer setup first, then spans per LLM call / tool call / step, then failure-path tests that assert the error span exists).
+- Phase 8.5 runs the **Agent Tracing checklist** as blocking sub-gate G2.5c.
+
 Not greenfield (edits inside an existing unit with an established error/log convention): follow the existing convention, no extra gate. If the existing convention is *absent*, say so and treat the change as greenfield for the touched surface.
 
 **Impeccable skill loading during implementation:** When writing code in Phases 5-8, load applicable impeccable `global-*` skills BEFORE coding. These inform coding style, conventions, error handling, and validation patterns. Phase 8.5 enforces compliance — loading early prevents rework. **For HAS_FRONTEND changes:** also consult `Skill(impeccable, "harden <target>")` guidance during implementation for edge cases, i18n, error states, and text overflow. Hardening during implementation is cheaper than remediating after Phase 8.6. **For IS_GREENFIELD:** keep the approved Error & Logging Strategy open while coding — write the error types and logger setup *first*, before the feature logic, so every later path has something to use. Retrofitting is what produces `catch {}`.
+
+---
+
+## Production Tracing (MANDATORY — gate GT)
+
+Stop guessing what the agent did. Every session with the `dev` plugin installed records a production trace of its own run through hooks — automatically, not by asking the model to remember:
+
+| Recorded | Source | Use it to answer |
+|---|---|---|
+| Every tool call: name, redacted input summary, outcome, error text | `PreToolUse` / `PostToolUse` / `PostToolUseFailure` hooks + transcript `tool_result` | "What exactly did it run, and what did it get back?" |
+| Latency of every tool call and every model call, token usage | hook timestamps + transcript timestamps/usage | "Where did the 20 minutes go?" |
+| Reasoning step before each tool call (visible thinking/text) | transcript | "Why did it decide to do that?" |
+| Pipeline phases and gate verdicts | writes to `.dev-pipeline-state.json` | "Which phase was it in when it went wrong? Was the gate really GO?" |
+| Subagents and Workflow agents (per-agent duration + outcome) | `SubagentStart/Stop` + `devTrace` returned by `implement-and-review.js` | "Which parallel agent failed or stalled?" |
+| Nested AI calls run from the shell: `claude -p`, `gemini -p`, `agy -p`, `codex exec`, `cursor-agent -p`, ... — model, turns, tokens, cost, the nested agent's own tool calls and errors, link to the child session's trace | Bash hooks + parsing of `--output-format json/stream-json` | "What did the model I called from the shell actually do, and why did it fail?" |
+
+Storage: `<git-common-dir>/dev-trace/<session>.jsonl` (shared by all worktrees, never in the working tree, never committed). Secrets are redacted and file contents are never stored. Retention 14 days.
+
+**CLI** — `<skill_dir>` is the directory of this `SKILL.md` (fallback `~/.claude/skills/dev`):
+```bash
+node <skill_dir>/dev-trace.js doctor            # is this session being traced?
+node <skill_dir>/dev-trace.js summary [session] # phases, per-tool latency (avg/p95/max), failures with "why", slowest calls
+node <skill_dir>/dev-trace.js failures [session]# every failed call: input, reasoning that led to it, verbatim error, retries
+node <skill_dir>/dev-trace.js show [session] [--failures] [--slow N]   # chronological timeline
+node <skill_dir>/dev-trace.js export [session] > trace.json            # OTLP/JSON for Jaeger / Phoenix / Langfuse / Tempo
+```
+
+**Rules (non-negotiable):**
+1. **Diagnose from the trace, not from memory.** Before any debug step — verify failure, review/audit remediation, council NO-GO, Workflow `FAILED`, or resuming a handoff — run `dev-trace.js failures` (or `summary`) and quote the verbatim error and the trace call number in your reasoning. A fix that does not cite the evidence it is fixing is a guess.
+2. **Narrate decisions in one line.** Hidden thinking is not always persisted, so the trace's "why" comes from what you write. Before each phase entry, each fix and each gate verdict, write one visible line: `Decision: <what> — because <evidence>`. It costs a sentence and makes every later diagnosis possible.
+3. **The last run counts.** A verification command (tests, build, lint, type check) whose last run in the turn is red is red. The Stop hook enforces it: if one failed and was never re-run green, it blocks once and lists them. Fix and re-run the SAME command, or say plainly that it still fails and record it in `HANDOFF.md`.
+4. **Never claim a result the trace contradicts.** "Tests pass", "build is green", "council said GO" must match the trace. If they do not, the trace wins.
+5. **Nested AI calls are traced too.** When you call another model from the shell during the pipeline (second opinions, councils, code generation with `claude -p`, `gemini -p`, `agy -p`, `codex exec`):
+   - always request structured output and keep that JSON on stdout or `tee` it, so the trace can parse turns, tokens, tool calls and errors. While a pipeline is active the PreToolUse hook **denies** `claude`/`gemini`/`agy`/`codex`/`cursor-agent` headless calls without it:
+     - `agy -p "…" --output-format stream-json --print-timeout 15m` (or `json`). Check `status == "SUCCESS"`, not just the exit code: a permission soft-denial exits `0`. The default `--print-timeout` is `0s`, which means no limit, so always set it.
+     - `claude -p "…" --output-format stream-json --verbose` (or `json`). Check `is_error` / `subtype`, e.g. `error_max_turns`.
+     - `gemini -p "…" --output-format json` (or `stream-json`). Exit codes: `1` API error, `42` bad input, `53` turn limit.
+     - `codex exec --json "…"`. Check `turn.failed` / `error` events.
+   - for CLIs without a structured mode: never discard stderr, never `|| true`, set a timeout, and check the exit code. The trace records latency and outcome and flags the call as "internals not traced";
+   - run them from the project directory so a nested `claude -p` writes its own trace next to yours (`summary` links it as the child session);
+   - after the call, check `dev-trace.js summary` → *Nested AI calls* before using the output. A nested run that hit `error_max_turns` or had tool errors is not a valid answer.
+6. **Tracing stays on.** Do not set `DEV_TRACE=0` or `DEV_TRACE_GATE=0` yourself; only the user can, and it is recorded as a waiver.
 
 ---
 
@@ -180,6 +243,8 @@ Compare the recorded task against the user's current request. "Same task" includ
 
 **Anti-rationalization:** "the user gave me a fresh description, so this is obviously new work" — check anyway. A resumed task is often re-described in different words. Reading one file is cheap; redoing eight phases is not.
 
+**Trace on resume:** if a handoff names a `Trace:` session, run `node <skill_dir>/dev-trace.js summary <session>` (and `failures <session>`) BEFORE reconciling. It tells you what the previous session actually ran, what failed and where it stopped — facts, not the handoff author's memory of them. If the handoff and the trace disagree, the trace wins; fix the handoff.
+
 **Hook assist:** the `SessionStart` hook `~/.claude/hooks/dev-handoff-detect.js` already surfaces a summary of any `IN PROGRESS`/`PAUSED` handoff at session start, including a collision warning if another Claude process is alive in the same directory. Treat that summary as a pointer, not a substitute — still read the full file at Step 0a. If the hook said nothing, it does not prove absence (cwd may be outside the project): run the search anyway.
 
 ### Step 0b: Fresh pipeline
@@ -188,6 +253,7 @@ Compare the recorded task against the user's current request. "Same task" includ
 2. Classify magnitude: **TRIVIAL** (config/typo/1-file/deps/style) | **STANDARD** (feature/multi-file/bug/API) | **COMPLEX** (architecture/new module/cross-cutting/security-sensitive).
 2b. **Set `IS_GREENFIELD`** (see §IS_GREENFIELD trigger). Announce it: "🧯 Greenfield detected — error handling & logging will be designed in Phase 1 and verified at gate G2.5b." Store in state as `isGreenfield`.
    - **IS_GREENFIELD + TRIVIAL is a contradiction.** A new tool/app/module is never trivial. Escalate to STANDARD (upward reclassification is the default) and say why. If the user insists on TRIVIAL, keep the flag: the trivial path still owes the proportional Error & Logging proposal (§Resilience & Observability Design, minimal subset) inline before implementing, and G2.5b still applies.
+2c. **Set `IS_AGENTIC`** (see §IS_AGENTIC trigger). Announce it: "🔭 Agentic code detected — this tool will call an AI. I'll ask you how much of its reasoning, metrics and tracing you want to be able to inspect." Store in state as `isAgentic`. IS_AGENTIC implies IS_GREENFIELD for the touched surface. If magnitude is TRIVIAL, ask the AI Observability Proposal right here, before step 3.
 3. Show classification + active phases + advisory cost estimate (~20K trivial / ~120K standard / ~250K+ complex). Token estimates are advisory only — Claude Code has no runtime token counter.
 4. Ask user: proceed / override magnitude / abort.
 5. Create TaskCreate entries for active phases.
@@ -201,13 +267,17 @@ Compare the recorded task against the user's current request. "Same task" includ
   "rollbackSHA": "<current HEAD SHA>",
   "startedAt": "<ISO timestamp>",
   "isGreenfield": <true|false>,
+  "isAgentic": <true|false>,
+  "tracing": { "active": <true|false>, "session": "<session id>", "dir": "<trace dir>" },
   "gates": {},
   "impeccableGate": null,
   "observabilityGate": null,
-  "uiQualityGate": null
+  "uiQualityGate": null,
+  "agentTraceGate": null
 }
 ```
 **If this file is not written, the pipeline has NOT started. Do NOT proceed to any phase.**
+6b. **MANDATORY: Verify production tracing (gate GT).** Run `node <skill_dir>/dev-trace.js doctor` (see §Production Tracing). On `status: OK` store `"tracing": { "active": true, "session": "<$CLAUDE_CODE_SESSION_ID>", "dir": "<trace dir>" }` in the state file. On `NOT TRACING`: tell the user the run will be untraced and why (usually: the suite was copied as a bare skill instead of installed as a plugin, so the hooks are absent), and ask: A) install the plugin and restart (recommended), B) continue untraced. Only B sets `tracing.waivedBy: "user"` — never waive it yourself. Record the waiver under `Waived / deferred` in `HANDOFF.md`.
 7. **MANDATORY: Resolve the project root and write `HANDOFF.md` there NOW** (see §Handoff File). Both `.dev-pipeline-state.json` and `HANDOFF.md` live in the project root — NOT necessarily the directory Claude was launched from.
 8. Announce: "▶ Phase 0: Triage complete. State + HANDOFF.md written to `<project-root>`. Starting /dev pipeline ([MAGNITUDE]) for: [description]"
 
@@ -252,7 +322,53 @@ Answer every line. "Not needed" is a valid answer **only if written down with a 
 14. **Boundary logging** — log every external call: outcome + duration for zero-debugger diagnostics.
 15. **Anti-duplication** — do not both log and re-raise the same error at multiple levels: log where handled. No logging inside hot loops.
 
-**Proportionality:** a one-shot script needs points 2, 4, 8, 9, 10 — not all 15 points. A service with external integrations needs all 15. Propose the subset proportional to magnitude and state it explicitly.
+**Tracing**
+16. **Spans at boundaries** — every inbound request/job/command and every outbound call is a span (or at minimum a structured log line) with name, duration, outcome and error type. Reuse the project's tracer; if there is none and the unit is a service, propose OpenTelemetry (stdlib-only alternative: structured start/end log lines carrying the correlation id).
+17. **Propagation** — the trace/correlation id crosses process boundaries (HTTP headers such as W3C `traceparent`, message metadata, subprocess env) and appears in every log line of the request.
+
+**Proportionality:** a one-shot script needs points 2, 4, 8, 9, 10 — not all 17 points. A service with external integrations needs all 17. Propose the subset proportional to magnitude and state it explicitly.
+
+### AI Observability Proposal (IS_AGENTIC — ask the user, gate GA)
+
+When the tool being built calls an AI (SDK or `claude -p` / `gemini -p` / `agy -p` / `codex exec` ...), the user decides how much of the AI's behaviour they want to be able to inspect. Present this as an explicit question — one message, with the options and what each costs — not as a silent default. Recommend A.
+
+> 🔭 This tool calls an AI (`<where: file / CLI / SDK>`). How much do you want to be able to see of what the AI does inside it?
+>
+> | | Reasoning | Metrics | Traces | Failures | How you inspect it |
+> |---|---|---|---|---|---|
+> | **A. Full (recommended)** | rationale / plan per step, thinking summary when the model exposes it, why the loop stopped | latency, tokens (in/out/thinking/cache), cost, turns, tool calls + success rate, retries, error rate, timeouts | run id + span per LLM call, per tool call, per step; child session id for CLI runs | error span with type + verbatim message for every failure path; non-SUCCESS status of CLI runs | local report command (`<tool> trace <run-id>` or a JSONL run log) + optional OTLP export (Jaeger / Phoenix / Langfuse) |
+> | **B. Choose** | pick from the A columns | | | | |
+> | **C. Minimal** | — | latency, tokens, exit status | run id | error + stderr tail | log lines |
+> | **D. None** | — | — | — | (exit code + timeout still mandatory: G2.5b) | — |
+>
+> Cost of A: ~1 module (tracer + redaction + report) and a few tests; tracing can be switched off by config.
+
+Record the answer verbatim in `.dev-pipeline-state.json`:
+```json
+{ "agentObservability": { "decision": "A|B|C|D|not-applicable", "items": ["reasoning", "metrics", "traces", "failures", "report", "otlp"], "answeredBy": "user", "askedAt": "<ISO>" } }
+```
+and under `Key decisions` in `HANDOFF.md` (D also under `Waived / deferred`). The chosen items become requirements: Phase 1 designs them (§Agent Tracing Design), Phase 3 plans them as a **Tracing** task group, G2.5c verifies them with a real run, and the Knowledge Quiz asks about them. D never waives the resilience basics for AI CLI subprocesses (timeout, exit/status check, stderr capture), which stay CRITICAL in G2.5b/G2.5c.
+
+**Standing default:** if `~/.claude/dev-pipeline.json` contains `{"agentObservabilityDefault": "A"}` (or B/C/D), pre-select that option and ask a one-line confirmation instead of the full table: "🔭 This tool calls an AI (`<where>`). Applying your default observability: **A — full** (reasoning, metrics, traces, failures, report + OTLP). OK, or change?" Still record `answeredBy: "user"` only after they confirm. The default never skips the question.
+
+If the user already answered this for the same tool in an earlier pipeline (see `HANDOFF.md` Key decisions or project memory), show the previous choice and ask to confirm rather than re-asking from scratch.
+
+### Agent Tracing Design (IS_AGENTIC)
+
+Code that drives an LLM must be diagnosable the same way this pipeline is: from production traces that reveal tool calls, reasoning steps, latency and failures. Answer every line covered by the user's AI Observability choice in the Phase 1 design doc (decision A: all; B: the chosen items; C: 2, 3 latency/tokens, 6, 10; D: 10's timeout/status/stderr only):
+
+1. **Tracer** — the project's existing one (OpenTelemetry, LangSmith, Langfuse, Phoenix, Braintrust, ...) or OpenTelemetry with the GenAI semantic conventions (`gen_ai.*` attributes). Exporter configurable by env; console/file exporter for local runs, in-memory exporter in tests.
+2. **Run span** — one root span per agent run / conversation turn with a run id that is returned to the caller and written to logs, so a user report can be mapped to its trace.
+3. **LLM call spans** — model, latency, input/output tokens, finish/stop reason, retry attempt number. Prompts and completions recorded only through the redaction layer, and switchable off.
+4. **Tool call spans** — tool name, redacted arguments, result status and size, duration; child of the LLM step that requested it.
+5. **Reasoning / decision steps** — each loop iteration is a span or event: step number, chosen action, short rationale or plan if the model provides one, and why the loop stopped (final answer, max iterations, budget, error).
+6. **Failures** — every error path sets error status on its span with the exception type and message: provider errors, timeouts, rate limits, tool exceptions, invalid tool arguments, output parse/schema failures, guardrail refusals.
+7. **Cost & limits** — token totals per run, and the configured max iterations / timeout / budget recorded on the run span.
+8. **Sampling & privacy** — sampling rate and content capture are configuration, with secrets/PII redacted centrally before export.
+9. **Tests** — at least one test runs the agent with a failing tool (or a mocked failing LLM call) and asserts the error span and the run id exist.
+10. **AI CLI subprocesses** (`claude -p`, `gemini -p`, `agy -p`, `codex exec`, ...): each invocation is a span (CLI, model, args redacted, exit code, duration, timeout); the CLI runs with its structured output mode (`agy`/`claude`/`gemini --output-format stream-json`/`json`, `codex exec --json`) and the wrapper parses it into child spans/attributes: turns, tokens, cost, the nested agent's tool calls, `is_error`/`subtype` (e.g. `error_max_turns`); stderr is captured, never discarded; a hard timeout kills the process tree; the run id is passed down (env var, or `--session-id` for Claude) and the child session id is recorded on the span. Success is the structured status, not the exit code: `agy` exits `0` on permission soft-denials, so check `status == "SUCCESS"`; Claude: `is_error`/`subtype`; Gemini: exit `53` = turn limit; Codex: `turn.failed`. Use the CLI's own timeout when it has one (`agy --print-timeout`, whose default is unlimited). For a CLI without a structured mode, record exit code + stderr tail + duration and say so in the design.
+
+Proportionality: a single LLM call in a script needs 2, 3, 6 (plus 10 if it is a CLI subprocess); an agent loop with tools needs all of them.
 
 ## Phase 2: Design Council (complex only)
 
@@ -284,8 +400,8 @@ Council the design for implementation-readiness (soundness, completeness, scope,
 ### TRIVIAL path (no workflow)
 
 1. Capture rollback SHA → store in `.dev-pipeline-state.json`.
-2. Implement the change directly (no plan, no subagents).
-3. Run verification: full test suite or build fallback. On failure: debug and fix.
+2. Implement the change directly (no plan, no subagents). If the change makes the code call an AI (SDK or headless CLI), stop first and ask the AI Observability Proposal (gate GA) — the Stop hook blocks until the answer is recorded.
+3. Run verification: full test suite or build fallback. On failure: **diagnose from evidence** — read the verbatim error (`dev-trace.js failures` shows it with the reasoning that led to the call), state the root cause, fix, then re-run the SAME command until green. The Stop hook blocks once if a failed verification command was never re-run green.
 4. Security audit (conditional): if changed files match HAS_FRONTEND or HAS_API, run `maestro:security-audit` on changed files. Fix HIGH+ findings before proceeding.
 **Exit:** Change implemented, tests/build passing, security checked (if applicable).
 **Completion:** Update `.dev-pipeline-state.json`: add `5`, `6`, `7`, `8` to `completedPhases`. Announce: "✅ Phases 5-8: Implement+Verify+Review+Audit complete (trivial path). Next: Phase 8.5."
@@ -313,7 +429,7 @@ Workflow({
 })
 ```
 4. Wait for Workflow completion. Parse results.
-5. If `status: FAILED` → announce failure details, ask user: retry / manual fix / abort.
+5. If `status: FAILED` → run `dev-trace.js summary` (the Workflow's per-agent spans, with durations and errors, are in the trace) and show the user: the failing phase, the failing agent label(s), `lastFailures` verbatim. Then ask: retry / manual fix / abort. A retry prompt must cite the failing span, not a paraphrase.
 
 **What the Workflow does internally (all deterministic, parallel, with loops):**
 - **Implement:** Parallel agents (one per task, worktree-isolated) + integration agent merges results
@@ -354,7 +470,7 @@ For each applicable skill:
 
 ### Step 2b: Resilience & Observability checklist (IS_GREENFIELD — blocking)
 
-Verify the implemented code against the 15 points of §Resilience & Observability Design. Read the actual changed files — do not infer from the plan. Classify each gap:
+Verify the implemented code against the 17 points of §Resilience & Observability Design. Read the actual changed files — do not infer from the plan. Classify each gap:
 
 | Gap | Severity |
 |---|---|
@@ -369,6 +485,8 @@ Verify the implemented code against the 15 points of §Resilience & Observabilit
 | Same error logged at multiple levels of the stack | WARNING |
 | No test covering a failure path | WARNING |
 | Unstructured logging where the project logs structured | WARNING |
+| Outbound call / job / request handler with no trace span (or no duration + outcome logged) | WARNING |
+| Trace / correlation id not propagated across a process or service boundary | WARNING |
 
 Non-greenfield tasks: skip this step, but still report any CRITICAL row spotted in the diff as a normal Phase 8.5 CRITICAL finding.
 
@@ -378,6 +496,33 @@ Update state:
 ```
 
 Gate G2.5b passes when zero CRITICAL remain and every WARNING is fixed or explicitly waived by the user.
+
+### Step 2c: Agent Tracing checklist (IS_AGENTIC — blocking)
+
+Verify the implemented code against §Agent Tracing Design, scoped to the items in `state.agentObservability` (rows outside the user's choice are N/A, except the AI CLI timeout / exit-status / stderr rows, which always apply). Read the changed files AND run the code once (test or example run) with the tracer pointed at a local sink (console/file exporter, in-memory exporter in tests): a checklist answered from the source alone is not verified.
+
+| Gap | Severity |
+|---|---|
+| An LLM call with no span (model, latency, token usage, finish reason) | CRITICAL |
+| A tool / function call executed for the model with no span (tool name, arguments, outcome, duration) | CRITICAL |
+| A failure path (LLM error, tool exception, timeout, schema/parse failure, max-iterations stop) that leaves no error span / error status | CRITICAL |
+| Prompts, tool arguments or outputs traced without redaction of secrets / PII | CRITICAL |
+| No run / trace id tying all steps of one agent run together, or not returned to the caller / logged | WARNING |
+| Agent loop iterations / decision steps not recorded (which step, why it chose that tool, why it stopped) | WARNING |
+| Retries not visible (each attempt should be its own span or a counted attribute) | WARNING |
+| No test asserting that a failing tool or LLM call produces an error span | WARNING |
+| Tracing cannot be disabled or sampled via configuration | WARNING |
+| AI CLI subprocess (`claude -p`, `gemini -p`, `agy -p`, `codex exec`, ...) with no span, exit code ignored, or stderr discarded | CRITICAL |
+| AI CLI subprocess with no timeout | CRITICAL |
+| AI CLI that supports structured output run in text mode, so its turns / tool calls / errors cannot be traced | WARNING |
+| Child session id / nested run id not recorded on the span | WARNING |
+
+Update state:
+```json
+{ "agentTraceGate": { "critical": 0, "warnings": { "fixed": 0, "waived": 0 }, "verifiedByRun": true, "passed": true } }
+```
+
+Gate G2.5c passes when zero CRITICAL remain, every WARNING is fixed or explicitly waived by the user, and `verifiedByRun` is true.
 
 ### Step 3: Remediation
 
@@ -389,7 +534,7 @@ Gate G2.5b passes when zero CRITICAL remain and every WARNING is fixed or explic
 ### Step 4: Gate check
 
 Gate G2.5 passes when: zero CRITICAL findings remain AND all WARNING findings are fixed or waived.
-Gate G2.5b (IS_GREENFIELD only) passes per Step 2b. Both must pass to leave Phase 8.5.
+Gate G2.5b (IS_GREENFIELD only) passes per Step 2b. Gate G2.5c (IS_AGENTIC only) passes per Step 2c. All applicable gates must pass to leave Phase 8.5.
 
 Update `.dev-pipeline-state.json` with:
 ```json
@@ -512,7 +657,7 @@ Update `.dev-pipeline-state.json`:
 
 **GATE G3 — This phase is MANDATORY for STANDARD and COMPLEX. Do NOT skip it.**
 
-Council the implementation for ship-readiness (correctness, quality, completeness, risk). Include: what was built, implementation summary, test results, review findings (from Workflow result), audit results, diff stats. **If IS_GREENFIELD:** include the Error & Logging Strategy as approved plus the G2.5b outcome (gaps found, fixed, waived) — the council reviews whether the resilience story is adequate for what is shipping. **If Phase 8.6 ran:** include UI Quality Gate results (detect findings, audit score + dimension breakdown, critique heuristic scores if available, remediation actions taken, waived items). **Invoke:** `Skill(llm-council)`.
+Council the implementation for ship-readiness (correctness, quality, completeness, risk). Include: what was built, implementation summary, test results, review findings (from Workflow result), audit results, diff stats. **If IS_GREENFIELD:** include the Error & Logging Strategy as approved plus the G2.5b outcome (gaps found, fixed, waived) — the council reviews whether the resilience story is adequate for what is shipping. **Always:** include the `dev-trace.js summary` of this pipeline run — failures and whether each was resolved, debug/remediation cycles, slowest steps. Unresolved failures in the trace are a NO-GO unless explained. **If IS_AGENTIC:** include the G2.5c outcome and one sample trace of the built agent (span tree of a real run). **If Phase 8.6 ran:** include UI Quality Gate results (detect findings, audit score + dimension breakdown, critique heuristic scores if available, remediation actions taken, waived items). **Invoke:** `Skill(llm-council)`.
 - **GO** → Phase 10. **NO-GO** → Council Remediation Loop: extract feedback, re-run Workflow with council feedback as additional context, re-council. Max 5 iterations (see Protocols).
 **Completion:** Update `.dev-pipeline-state.json`: add `9` to `completedPhases`, set `gates.shipCouncilGO: true`. Announce: "✅ Phase 9: Ship Council complete. Verdict: GO. Next: Phase 10."
 
@@ -534,6 +679,7 @@ Generate questions based on:
 - **Key logic** — "How does the new Y work?" / "Why does Z follow this pattern?"
 - **Design decisions** — "Why did we choose approach A over B?"
 - **Handled edge cases** — "What happens if input is empty, null, or exceeding bounds?"
+- **Tracing** (mandatory if IS_AGENTIC, ≥1 question) — "A user reports a wrong answer from run R: which span tells you which tool the agent called and why?"
 - **Errors & logging** (mandatory if IS_GREENFIELD, ≥1 question) — "What happens if call to X times out?" / "Where is error Y caught and what does the user see?" / "At which log level is Z emitted and why?"
 - **Test coverage** — "Which scenario is verified by test T?"
 - **Dependencies** — "Which existing module was reused and why?"
@@ -564,7 +710,7 @@ Final report: X/N correct, Y partial, Z incorrect. No gate — quiz does not blo
 **STANDARD/COMPLEX:** `Skill(superpowers:finishing-a-development-branch)`.
 **TRIVIAL (no worktree):** Show `git diff --stat`, ask user: A) Commit, B) Leave unstaged, C) Discard.
 
-**Completion announcement:** Feature, magnitude, council iterations (or N/A), audits run, docs updated, result.
+**Completion announcement:** Feature, magnitude, council iterations (or N/A), audits run, docs updated, result, and the trace line: `Trace: <session> — <N> tool calls, <F> failures (<U> unresolved), wall <time>` (from `dev-trace.js summary`). Point the user at `dev-trace.js export <session>` if they want to load it into an OpenTelemetry viewer.
 **Completion:** Update `.dev-pipeline-state.json`: add `11` to `completedPhases`. Delete `.dev-pipeline-state.json` (pipeline complete). Final `HANDOFF.md` refresh with `Status: DONE`, then **keep it** — do NOT delete. It is the record of what was built, what was waived, and what was deliberately not done. Announce: "✅ Phase 11: Finish complete. /dev pipeline DONE. Handoff at `<project-root>/HANDOFF.md`."
 
 ---
@@ -599,7 +745,7 @@ All loop counters are JS variables, not LLM-estimated counts.
 
 ## State & Rollback
 
-**Pipeline state** persisted to `.dev-pipeline-state.json` after every phase completion, reclassification, and remediation cycle. Fields: task, magnitude, isGreenfield, currentPhase, completedPhases, rollbackSHA, remediationCounts, designDoc, planDoc, worktreePath, startedAt, impeccableGate, observabilityGate, uiQualityGate, knowledgeQuiz.
+**Pipeline state** persisted to `.dev-pipeline-state.json` after every phase completion, reclassification, and remediation cycle. Fields: task, magnitude, isGreenfield, isAgentic, tracing, currentPhase, completedPhases, rollbackSHA, remediationCounts, designDoc, planDoc, worktreePath, startedAt, impeccableGate, observabilityGate, uiQualityGate, agentTraceGate, knowledgeQuiz.
 
 Resume detection is **Phase 0 Step 0a** — see there for the full lookup order and reconciliation table. Delete the state file at Phase 11 completion or user abort; keep `HANDOFF.md`.
 
@@ -655,6 +801,7 @@ Magnitude: <trivial|standard|complex>
 Project root: <absolute path>
 Branch / worktree: <branch> @ <worktreePath or "none">
 Rollback SHA: <sha>
+Trace: <session id(s) of the sessions that worked on this> — `node <skill_dir>/dev-trace.js summary <session>`
 
 ## Goal
 <2-4 sentences: what the user asked for, in their terms, and the acceptance
@@ -663,7 +810,7 @@ condition — how we know it's done. Not a phase list.>
 ## Where we are
 Phase <N>: <name> — <one line on what is in flight right now>
 Completed: <list>  |  Remaining: <list>
-Gates: designCouncil=<GO/–> shipCouncil=<GO/–> impeccable=<pass/–> observability=<pass/n-a> ui=<pass/–>
+Gates: designCouncil=<GO/–> shipCouncil=<GO/–> impeccable=<pass/–> observability=<pass/n-a> agentTrace=<pass/n-a> ui=<pass/–> tracing=<on/waived>
 
 ## Next step
 1. <the single next concrete action, specific enough to execute cold>
@@ -681,7 +828,7 @@ context that took the longest to rebuild.>
 - <decision> — because <reason>. Alternative rejected: <alt>.
 
 ## Failures & dead ends
-- ❌ <what was tried> → <how it failed, exact error text> → <resolved how, or still open>
+- ❌ <what was tried> → <how it failed, exact error text> → <resolved how, or still open>  (trace #<n> in <session>)
 <Only significant ones: failed approaches, non-obvious errors, flaky steps.
 This section prevents a post-clear Claude from re-trying what already failed.>
 
@@ -709,7 +856,7 @@ here is worse than none.>
 ### Rules
 
 - **Facts only.** Every claim must be something that happened this session. No plans described as done, no assumed test results. If a step was skipped, write it in `Waived / deferred`.
-- **Errors verbatim.** Quote exact error text in `Failures & dead ends` — paraphrased errors are ungreppable.
+- **Errors verbatim.** Quote exact error text in `Failures & dead ends` — paraphrased errors are ungreppable. Copy it from `dev-trace.js failures`, and cite the trace call number.
 - Keep it under ~150 lines. If a section is empty, drop the heading.
 - Prose is terse and mechanical; this is a note to a Claude with zero memory, not a report.
 - Never put secrets, tokens, or credentials in it — it is a plaintext file in the repo.
