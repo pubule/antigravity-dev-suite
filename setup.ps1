@@ -82,6 +82,8 @@ if (-not $installSuccess) {
     }
     Copy-Item -Path (Join-Path $scriptDir "skills\dev\SKILL.md") -Destination $devSkillTarget -Force
     Copy-Item -Path (Join-Path $scriptDir "skills\dev\implement-and-review.js") -Destination $devSkillTarget -Force
+    Copy-Item -Path (Join-Path $scriptDir "skills\dev\dev-trace.js") -Destination $devSkillTarget -Force
+    Write-Warning "The bare-skill fallback has no hooks, so production tracing (dev-trace) will NOT record. /dev will flag this at gate GT."
     Write-Host "  ✓ Copied skill directly to $devSkillTarget" -ForegroundColor Green
 }
 Write-Host ""

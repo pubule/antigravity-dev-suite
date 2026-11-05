@@ -66,6 +66,8 @@ else
     mkdir -p "${HOME}/.claude/skills/dev"
     cp "${SCRIPT_DIR}/skills/dev/SKILL.md" "${HOME}/.claude/skills/dev/"
     cp "${SCRIPT_DIR}/skills/dev/implement-and-review.js" "${HOME}/.claude/skills/dev/"
+    cp "${SCRIPT_DIR}/skills/dev/dev-trace.js" "${HOME}/.claude/skills/dev/"
+    echo "  ! Note: the bare-skill fallback has no hooks, so production tracing (dev-trace) will NOT record. /dev will flag this at gate GT." >&2
     echo "  ✓ Copied skill directly to ~/.claude/skills/dev"
 fi
 echo ""

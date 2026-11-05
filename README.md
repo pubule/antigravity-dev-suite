@@ -20,6 +20,9 @@ Includes interactive visual documentation: see [`README.html`](./README.html).
   - **Gate G2.5b:** Resilience & Observability Strategy verification for greenfield code.
   - **Gate G2.6:** UI Quality Gate for frontend code (anti-pattern and accessibility scans).
   - **Gate G3:** Ship Council GO mandatory prior to documentation and release.
+  - **Gate GT:** Production tracing must be recording before Phase 1 (only the user can waive it).
+  - **Gate G2.5c:** Agent Tracing checklist for code that calls an LLM or runs a tool-calling loop (IS_AGENTIC).
+- **Production Tracing (`dev-trace`):** every session records tool calls, reasoning steps, latency and failures through hooks, so a bad run is diagnosed from evidence instead of guessed. See [Production Tracing](#-production-tracing).
 - **Parallel Workflow Engine:** Runs TDD tasks across isolated git worktrees in parallel, merges changes deterministically, runs self-healing auto-debug loops, and executes adversarial review refutation.
 - **Session Recovery & Handoff:** State persistence in `.dev-pipeline-state.json` paired with a human-readable `HANDOFF.md` to safely resume interrupted tasks across `/clear`, compaction, or terminal restarts.
 
@@ -89,6 +92,50 @@ Inside any Claude Code session in your project root:
 When a session is cleared or interrupted:
 - The `SessionStart` hook detects any active `HANDOFF.md` in progress.
 - Run `/dev`: the pipeline inspects state and prompts you to resume from the exact interrupted phase without repeating completed work.
+
+---
+
+## 🔭 Production Tracing
+
+Stop guessing what the agent did. With the plugin installed, hooks record a trace of every Claude Code session, with no effort from the model:
+
+| Recorded | How |
+|---|---|
+| Tool calls: name, redacted input summary, outcome, verbatim error | `PreToolUse` / `PostToolUse` / `PostToolUseFailure` hooks, cross-checked with the transcript |
+| Latency of each tool call and each model call, token usage | hook and transcript timestamps |
+| Reasoning step that led to each tool call | the visible thinking/text preceding the call in the transcript |
+| `/dev` phases and gate verdicts | every write to `.dev-pipeline-state.json` |
+| Subagents and Workflow agents (duration, outcome) | `SubagentStart/Stop` hooks, `devTrace` spans returned by `implement-and-review.js` |
+
+Traces live in `<git-common-dir>/dev-trace/<session>.jsonl`: one file per session, shared by all worktrees, never in the working tree. Secrets are redacted, file contents are never stored, and files older than 14 days are pruned.
+
+```bash
+D=~/.claude/plugins/.../skills/dev    # or wherever the dev skill is installed
+node $D/dev-trace.js doctor             # is this session being traced?
+node $D/dev-trace.js summary            # phases, per-tool avg/p95/max latency, failures + "why", slowest calls
+node $D/dev-trace.js failures           # each failed call with its input, reasoning and verbatim error
+node $D/dev-trace.js show --slow 10     # the 10 slowest calls on the timeline
+node $D/dev-trace.js export > trace.json   # OTLP/JSON for Jaeger, Phoenix, Langfuse, Tempo
+```
+
+**How it is enforced in `/dev`:**
+- **Gate GT:** Phase 0 runs `doctor`. An untraced run needs the user's explicit waiver.
+- **Diagnose from the trace:** every debug, remediation, NO-GO and resume step starts from `dev-trace.js failures` and cites the verbatim error.
+- **Stop check:** while a pipeline is active, if a test, build, lint or type-check command failed in the turn and was never re-run green, the Stop hook blocks once and lists it. The agent then has to fix it or say plainly that it still fails.
+- **Ship Council** receives the trace summary. **Phase 11** reports `N tool calls, F failures (U unresolved)`.
+- **Code you build (IS_AGENTIC):** if the change calls an LLM or runs an agent loop, the design must include an Agent Tracing section (run id, LLM, tool and decision-step spans, error spans, redaction). Gate G2.5c verifies it with a real run.
+
+| Variable | Effect |
+|---|---|
+| `DEV_TRACE=0` | disable recording |
+| `DEV_TRACE_GATE=0` | disable the Stop check |
+| `DEV_TRACE_CONTENT=summary\|full\|minimal` | how much input/reasoning text is kept (default `summary`) |
+| `DEV_TRACE_DIR` | storage directory override |
+| `DEV_TRACE_RETENTION_DAYS` | retention (default 14) |
+
+> Tracing needs the hooks, so install the suite as a plugin. The bare-skill fallback copy does not trace, and `/dev` flags that at gate GT.
+
+Tests: `node --test tests/*.test.js` (Node 18+, no dependencies).
 
 ---
 
