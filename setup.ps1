@@ -88,5 +88,13 @@ if (-not $installSuccess) {
 }
 Write-Host ""
 
+# Default AI observability choice for tools that call an AI (asked/confirmed by /dev, gate GA)
+$defaultsFile = Join-Path $HOME ".claude\dev-pipeline.json"
+if (-not (Test-Path $defaultsFile)) {
+    Set-Content -Path $defaultsFile -Value "{`n  `"agentObservabilityDefault`": `"A`"`n}" -Encoding UTF8
+    Write-Host "  ✓ AI observability default set to A (full) in $defaultsFile" -ForegroundColor Green
+}
+Write-Host ""
+
 Write-Host "=== Installation complete ===" -ForegroundColor Cyan
 Write-Host "You can now run /dev inside any Claude Code session." -ForegroundColor Green

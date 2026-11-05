@@ -349,6 +349,8 @@ Record the answer verbatim in `.dev-pipeline-state.json`:
 ```
 and under `Key decisions` in `HANDOFF.md` (D also under `Waived / deferred`). The chosen items become requirements: Phase 1 designs them (§Agent Tracing Design), Phase 3 plans them as a **Tracing** task group, G2.5c verifies them with a real run, and the Knowledge Quiz asks about them. D never waives the resilience basics for AI CLI subprocesses (timeout, exit/status check, stderr capture), which stay CRITICAL in G2.5b/G2.5c.
 
+**Standing default:** if `~/.claude/dev-pipeline.json` contains `{"agentObservabilityDefault": "A"}` (or B/C/D), pre-select that option and ask a one-line confirmation instead of the full table: "🔭 This tool calls an AI (`<where>`). Applying your default observability: **A — full** (reasoning, metrics, traces, failures, report + OTLP). OK, or change?" Still record `answeredBy: "user"` only after they confirm. The default never skips the question.
+
 If the user already answered this for the same tool in an earlier pipeline (see `HANDOFF.md` Key decisions or project memory), show the previous choice and ask to confirm rather than re-asking from scratch.
 
 ### Agent Tracing Design (IS_AGENTIC)

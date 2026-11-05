@@ -72,5 +72,13 @@ else
 fi
 echo ""
 
+# Default AI observability choice for tools that call an AI (asked/confirmed by /dev, gate GA)
+DEFAULTS="${HOME}/.claude/dev-pipeline.json"
+if [ ! -f "${DEFAULTS}" ]; then
+    printf '{\n  "agentObservabilityDefault": "A"\n}\n' > "${DEFAULTS}"
+    echo "  ✓ AI observability default set to A (full) in ${DEFAULTS}"
+fi
+echo ""
+
 echo "=== Installation complete ==="
 echo "You can now run /dev inside any Claude Code session."
