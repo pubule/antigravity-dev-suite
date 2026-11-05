@@ -124,7 +124,7 @@ node $D/dev-trace.js export > trace.json   # OTLP/JSON for Jaeger, Phoenix, Lang
 - **Diagnose from the trace:** every debug, remediation, NO-GO and resume step starts from `dev-trace.js failures` and cites the verbatim error.
 - **Stop check:** while a pipeline is active, if a test, build, lint or type-check command failed in the turn and was never re-run green, the Stop hook blocks once and lists it. The agent then has to fix it or say plainly that it still fails.
 - **Ship Council** receives the trace summary. **Phase 11** reports `N tool calls, F failures (U unresolved)`.
-- **Nested AI calls:** while a pipeline is active, a headless `claude`/`gemini`/`codex`/`cursor-agent` call without structured output is denied (its internals would be invisible). `agy -p` and other CLIs without a JSON mode are traced for latency and outcome and flagged as "internals not traced".
+- **Nested AI calls:** while a pipeline is active, a headless `agy`/`claude`/`gemini`/`codex`/`cursor-agent` call without structured output is denied, because its internals would be invisible (e.g. `agy -p "…" --output-format stream-json --print-timeout 15m`). The trace flags `agy` runs with no timeout, since its default is unlimited. CLIs without a JSON mode are still traced for latency and outcome, and flagged as "internals not traced".
 - **Code you build (IS_AGENTIC):** if the change calls an LLM through an SDK or spawns a headless AI CLI (`claude -p`, `gemini -p`, `agy -p`, ...), or runs an agent loop, the design must include an Agent Tracing section (run id, LLM, tool and decision-step spans, error spans, redaction). Gate G2.5c verifies it with a real run.
 
 | Variable | Effect |

@@ -230,6 +230,10 @@ test('detects headless AI CLI calls and their output format', () => {
   assert.deepStrictEqual(d('claude -p "fix it" --output-format stream-json --verbose'), ['claude:stream-json']);
   assert.deepStrictEqual(d('cd app && gemini -p "summarize" -o json | jq .response'), ['gemini:json']);
   assert.deepStrictEqual(d('agy -p "refactor"'), ['agy:raw']);
+  assert.deepStrictEqual(d('agy --prompt "refactor" --output-format stream-json --print-timeout 15m'), ['agy:stream-json']);
+  assert.strictEqual(T.detectAiCalls('agy -p x --output-format json')[0].timeout, false);
+  assert.strictEqual(T.detectAiCalls('agy -p x --output-format json --print-timeout 10m')[0].timeout, true);
+  assert.strictEqual(T.detectAiCalls('timeout 600 agy -p x --output-format json')[0].timeout, true);
   assert.deepStrictEqual(d('FOO=1 timeout 60 npx @anthropic-ai/claude-code --print hi'), ['claude:raw']);
   assert.deepStrictEqual(d('codex exec --json "do it"'), ['codex:json']);
   assert.deepStrictEqual(d('claude --version; gemini --help; echo claude -p'), []);
@@ -261,6 +265,32 @@ test('parses Claude json, Claude stream-json and Gemini json results', () => {
   assert.strictEqual(g.tool_errors, 1);
   assert.deepStrictEqual(g.tools, { read_file: 2, run_shell_command: 1 });
 
+  // Antigravity CLI (https://antigravity.google/docs/cli/headless/)
+  const aj = T.parseAiOutput(JSON.stringify({ conversation_id: 'conv-1', status: 'SUCCESS', response: 'x', duration_seconds: 7.16, num_turns: 1, usage: { input_tokens: 10415, output_tokens: 657, thinking_tokens: 616, cache_read_tokens: 8113, total_tokens: 11072 } }));
+  assert.strictEqual(aj.child_session, 'conv-1');
+  assert.strictEqual(aj.api_ms, 7160);
+  assert.strictEqual(aj.error, undefined);
+  const as = T.parseAiOutput([
+    { event: 'init', conversation_id: 'conv-2', init: { cwd: '/p', tools: ['run_command'], model: 'gemini-3-pro' } },
+    { event: 'step_update', step_update: { conversation_id: 'conv-2', step_index: 2, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: {}, error: { type: 'x', message: 'boom' } } } },
+    { event: 'step_update', step_update: { conversation_id: 'conv-2', step_index: 3, state: 'DONE', step_type: 'tool', tool_name: 'write_to_file', tool_info: { name: 'write_to_file' } } },
+    { event: 'result', result: { conversation_id: 'conv-2', status: 'ERROR', error: 'invalid model selection', response: '', duration_seconds: 0, num_turns: 0, usage: {} } },
+  ].map((x) => JSON.stringify(x)).join('\n'));
+  assert.deepStrictEqual(as.tools, { run_command: 1, write_to_file: 1 });
+  assert.strictEqual(as.tool_errors, 1);
+  assert.strictEqual(as.model, 'gemini-3-pro');
+  assert.match(as.error, /status ERROR: invalid model selection/);
+
+  // Codex exec --json
+  const cx = T.parseAiOutput([
+    { type: 'thread.started', thread_id: 'th-1' },
+    { type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'bash -lc ls', status: 'completed' } },
+    { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122 } },
+  ].map((x) => JSON.stringify(x)).join('\n'));
+  assert.strictEqual(cx.child_session, 'th-1');
+  assert.deepStrictEqual(cx.tools, { shell: 1 });
+  assert.strictEqual(cx.out_tok, 122);
+
   assert.strictEqual(T.parseAiOutput('just some text'), null);
 });
 
@@ -274,13 +304,15 @@ test('nested AI calls are recorded, linked to the child trace, and unstructured 
   const deny = hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'g1', tool_input: { command: cmd } });
   assert.strictEqual(deny.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(deny.hookSpecificOutput.permissionDecisionReason, /--output-format json/);
-  assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'a1', tool_input: { command: 'agy -p "x"' } }), null, 'agy: traced, not denied');
+  const agyDeny = hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'a0', tool_input: { command: 'agy -p "x"' } });
+  assert.match(agyDeny.hookSpecificOutput.permissionDecisionReason, /agy --output-format stream-json/);
+  assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'a1', tool_input: { command: 'aider -m "x"' } }), null, 'CLIs without a JSON mode: traced, not denied');
   assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'g1', tool_input: { command: cmd } }, { DEV_TRACE_GATE: '0' }), null);
 
   const ccmd = 'claude -p "write tests" --output-format json';
   assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'c1', tool_input: { command: ccmd } }), null);
   hook(sb, 'PostToolUse', { tool_name: 'Bash', tool_use_id: 'c1', tool_input: { command: ccmd }, tool_response: { stdout: JSON.stringify({ type: 'result', subtype: 'success', num_turns: 4, session_id: 'child-9', total_cost_usd: 0.02, usage: { input_tokens: 100, output_tokens: 7 } }), stderr: '' } });
-  hook(sb, 'PostToolUse', { tool_name: 'Bash', tool_use_id: 'a1', tool_input: { command: 'agy -p "x"' }, tool_response: { stdout: 'done', stderr: '' } });
+  hook(sb, 'PostToolUse', { tool_name: 'Bash', tool_use_id: 'a1', tool_input: { command: 'aider -m "x"' }, tool_response: { stdout: 'done', stderr: '' } });
   // the child session wrote its own trace into the same directory
   hook(sb, 'SessionStart', { session_id: 'child-9', source: 'startup' });
 
@@ -295,5 +327,5 @@ test('nested AI calls are recorded, linked to the child trace, and unstructured 
   assert.match(r.stdout, /Nested AI calls/);
   assert.match(r.stdout, /claude .*4 turns/);
   assert.match(r.stdout, /child trace: node dev-trace.js summary child-9\n/);
-  assert.match(r.stdout, /agy[\s\S]*internals not traced/);
+  assert.match(r.stdout, /aider[\s\S]*internals not traced/);
 });

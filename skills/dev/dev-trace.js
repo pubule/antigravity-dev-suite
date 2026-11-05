@@ -394,8 +394,9 @@ const AI_CLIS = {
   codex: { headless: (a, t) => t[0] === 'exec' || t[0] === 'e', structured: ['--json', '--experimental-json'], requireStructured: true, fix: 'exec --json' },
   'cursor-agent': { headless: (a) => a.has('-p') || a.has('--print'), structured: ['--output-format'], requireStructured: true, fix: '--output-format stream-json' },
   qwen: { headless: (a) => a.has('-p') || a.has('--prompt'), structured: ['--output-format', '-o'], requireStructured: false },
-  agy: { headless: (a) => a.has('-p') || a.has('--print') || a.has('--prompt'), structured: ['--output-format', '--json', '-o'], requireStructured: false },
-  antigravity: { headless: (a) => a.has('-p') || a.has('--print') || a.has('--prompt'), structured: ['--output-format', '--json', '-o'], requireStructured: false },
+  // Antigravity CLI: https://antigravity.google/docs/cli/headless/ (-p/--print/--prompt, --output-format text|json|stream-json)
+  agy: { headless: (a) => a.has('-p') || a.has('--print') || a.has('--prompt'), structured: ['--output-format'], requireStructured: true, fix: '--output-format stream-json (or json) --print-timeout <duration>', timeoutFlag: '--print-timeout' },
+  antigravity: { headless: (a) => a.has('-p') || a.has('--print') || a.has('--prompt'), structured: ['--output-format'], requireStructured: true, fix: '--output-format stream-json (or json) --print-timeout <duration>', timeoutFlag: '--print-timeout' },
   opencode: { headless: (a, t) => t[0] === 'run', structured: ['--format'], requireStructured: false },
   ollama: { headless: (a, t) => t[0] === 'run', structured: ['--format'], requireStructured: false },
   aider: { headless: (a) => a.has('-m') || a.has('--message') || a.has('--message-file'), structured: [], requireStructured: false },
@@ -418,6 +419,7 @@ function detectAiCalls(command) {
   // split on pipes / command separators / subshell openers (quoted text stays inside its segment well enough)
   for (const seg of command.split(/\|\||&&|[;|\n]|\$\(|`/)) {
     let toks = shellTokens(seg.trim());
+    const wrappedTimeout = toks.includes('timeout') || toks.includes('gtimeout');
     while (toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[0]) || ['env', 'time', 'nohup', 'exec', 'sudo', 'command', 'timeout'].includes(toks[0]) || /^\d+[smh]?$/.test(toks[0]))) toks = toks.slice(1);
     if (!toks.length) continue;
     let name = path.basename(toks[0]).replace(/\.(cmd|exe|ps1)$/i, '');
@@ -449,7 +451,8 @@ function detectAiCalls(command) {
       structured: !!format && format !== 'text',
       requireStructured: spec.requireStructured,
       fix: spec.fix,
-      session_flag: val(['--session-id', '--resume', '-r']),
+      session_flag: val(['--session-id', '--resume', '-r', '--conversation']),
+      timeout: wrappedTimeout || (spec.timeoutFlag ? !!val([spec.timeoutFlag]) && !/^0s?$/.test(val([spec.timeoutFlag])) : undefined),
     });
   }
   return found;
@@ -485,10 +488,29 @@ function parseAiOutput(stdout) {
     // stream events carrying tool calls (Claude stream-json assistant messages, generic tool_use events)
     if (d.message && Array.isArray(d.message.content)) for (const b of d.message.content) if (b && b.type === 'tool_use') addTool(b.name);
     if (d.message && Array.isArray(d.message.content)) for (const b of d.message.content) if (b && b.type === 'tool_result' && b.is_error) r.tool_errors++;
+    if (d.type === 'init' && d.session_id) r.child_session = d.session_id;
     if (d.type === 'tool_use' || d.type === 'tool_call') addTool(d.tool_name || d.name || (d.tool && d.tool.name));
     if ((d.type === 'tool_result' && (d.status === 'error' || d.is_error)) || d.type === 'error') r.tool_errors += d.type === 'error' ? 0 : 1;
     if (d.type === 'error' || (d.error && typeof d.error === 'object')) r.error = clean((d.error && (d.error.message || d.error.type)) || d.message || 'error', 300);
-    // Gemini CLI json: { response, stats: { models, tools }, error? }
+    // Antigravity CLI: json envelope, or stream-json {event: init|step_update|result}
+    const agy = d.event === 'result' && d.result ? d.result : (d.conversation_id !== undefined && d.status !== undefined ? d : null);
+    if (agy) {
+      if (agy.conversation_id) r.child_session = agy.conversation_id;
+      if (agy.num_turns !== undefined) r.turns = agy.num_turns;
+      if (agy.duration_seconds !== undefined) r.api_ms = Math.round(agy.duration_seconds * 1000);
+      if (agy.usage) { r.in_tok = (agy.usage.input_tokens || 0) + (agy.usage.cache_read_tokens || 0); r.out_tok = (agy.usage.output_tokens || 0) + (agy.usage.thinking_tokens || 0); }
+      if (agy.status && agy.status !== 'SUCCESS') r.error = clean(`status ${agy.status}${agy.error ? ': ' + agy.error : ''}`, 300);
+    }
+    if (d.event === 'init' && d.init) { if (d.conversation_id) r.child_session = d.conversation_id; if (d.init.model) r.model = d.init.model; }
+    if (d.event === 'step_update' && d.step_update && d.step_update.step_type === 'tool' && d.step_update.state === 'DONE') {
+      addTool(d.step_update.tool_name || (d.step_update.tool_info && d.step_update.tool_info.name));
+      if (d.step_update.tool_info && d.step_update.tool_info.error) r.tool_errors++;
+    }
+    // Codex exec --json: thread id, failed turns, failed commands
+    if (d.type === 'thread.started' && d.thread_id) r.child_session = d.thread_id;
+    if (d.type === 'turn.failed') r.error = clean((d.error && d.error.message) || 'turn.failed', 300);
+    if (d.type === 'item.completed' && d.item && d.item.status === 'failed') r.tool_errors++;
+    // Gemini CLI json: { response, stats: { models, tools }, error? }; stream-json init carries session_id
     if (d.stats && typeof d.stats === 'object') {
       const models = d.stats.models || {};
       r.model = Object.keys(models).join(',') || r.model;
@@ -574,7 +596,7 @@ function recordAiCalls(dir, sid, input, ok, resp) {
   for (const c of calls) {
     append(dir, sid, {
       ev: 'ai.cli', id: input.tool_use_id, cli: c.cli, model: (parsed && parsed.model) || c.model,
-      output_format: c.output_format, structured: c.structured, parsed: !!parsed,
+      output_format: c.output_format, structured: c.structured, parsed: !!parsed, timeout: c.timeout,
       ok: ok && !(parsed && parsed.error), error: !ok ? clean(input.error || 'failed', limits().error) : parsed && parsed.error ? parsed.error : undefined,
       child_session: parsed && parsed.child_session, turns: parsed && parsed.turns, api_ms: parsed && parsed.api_ms,
       in_tok: parsed && parsed.in_tok, out_tok: parsed && parsed.out_tok, cost_usd: parsed && parsed.cost_usd,
@@ -946,6 +968,7 @@ function printSummary(d) {
         x.tools ? 'tools ' + Object.entries(x.tools).map(([k, v]) => `${k}×${v}`).join(' ') : null,
         x.tool_errors ? `${x.tool_errors} tool errors` : null].filter(Boolean).join(', ');
       p(`  ${x.ok === false ? '✗' : '✓'} ${x.cli.padEnd(8)} ${fmtDur(x.dur_ms).padStart(7)}  ${parts}${x.error ? '  error: ' + clip(String(x.error).split('\n')[0], 120) : ''}`);
+      if (x.timeout === false) p('      ⚠ no timeout: a hung nested agent would stall the pipeline (agy: --print-timeout, others: wrap in `timeout`)');
       if (!x.parsed) p(`      ⚠ internals not traced — ${x.structured ? 'structured output was not on stdout' : 'no structured output flag'}`);
       if (x.child_session) p(`      child trace: node dev-trace.js summary ${x.child_session}${d.childSessions && d.childSessions.includes(x.child_session) ? '' : '  (no trace file here: the child ran without the dev plugin or in another repo)'}`);
     }
