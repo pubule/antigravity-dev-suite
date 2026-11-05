@@ -562,6 +562,7 @@
   <tr><td>Latency of every tool call and model call, token usage</td><td>hook + transcript timestamps</td></tr>
   <tr><td>Reasoning step that led to each call</td><td>visible thinking/text in the transcript</td></tr>
   <tr><td>Phases and gate verdicts</td><td>writes to <code>.dev-pipeline-state.json</code></td></tr>
+  <tr><td>Nested AI calls (<code>claude -p</code>, <code>gemini -p</code>, <code>agy -p</code>, <code>codex exec</code>): turns, tokens, tool calls, errors, child trace</td><td>Bash hooks + <code>--output-format json/stream-json</code></td></tr>
   <tr><td>Subagents and Workflow agents</td><td><code>SubagentStart/Stop</code> + <code>devTrace</code> spans from <code>implement-and-review.js</code></td></tr>
 </table>
 <pre><code>node &lt;skill_dir&gt;/dev-trace.js doctor     # is this session traced?
@@ -575,7 +576,7 @@ node &lt;skill_dir&gt;/dev-trace.js export     # OTLP/JSON for Jaeger, Phoenix, 
     <li>Every debug, remediation, NO-GO and resume step starts from <code>dev-trace.js failures</code> and cites the verbatim error.</li>
     <li><strong>Stop check</strong>: a test, build or lint command that failed and was never re-run green blocks the stop once.</li>
     <li>Ship Council gets the trace summary. Phase 11 reports tool calls, failures and unresolved failures.</li>
-    <li><strong>Gate G2.5c (IS_AGENTIC)</strong>: code that calls an LLM must emit run, LLM-call, tool-call, decision-step and error spans, verified with a real run.</li>
+    <li><strong>Gate G2.5c (IS_AGENTIC)</strong>: code that calls an LLM (SDK or headless CLI subprocess such as <code>claude -p</code>, <code>gemini -p</code>, <code>agy -p</code>) must emit run, LLM-call, tool-call, decision-step and error spans, verified with a real run.</li>
   </ul>
 </div>
 

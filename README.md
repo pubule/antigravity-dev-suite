@@ -106,6 +106,7 @@ Stop guessing what the agent did. With the plugin installed, hooks record a trac
 | Reasoning step that led to each tool call | the visible thinking/text preceding the call in the transcript |
 | `/dev` phases and gate verdicts | every write to `.dev-pipeline-state.json` |
 | Subagents and Workflow agents (duration, outcome) | `SubagentStart/Stop` hooks, `devTrace` spans returned by `implement-and-review.js` |
+| Nested AI calls from the shell (`claude -p`, `gemini -p`, `agy -p`, `codex exec`, ...): model, turns, tokens, cost, the nested agent's tool calls and errors, link to the child trace | Bash hooks + parsing of `--output-format json/stream-json` |
 
 Traces live in `<git-common-dir>/dev-trace/<session>.jsonl`: one file per session, shared by all worktrees, never in the working tree. Secrets are redacted, file contents are never stored, and files older than 14 days are pruned.
 
@@ -123,7 +124,8 @@ node $D/dev-trace.js export > trace.json   # OTLP/JSON for Jaeger, Phoenix, Lang
 - **Diagnose from the trace:** every debug, remediation, NO-GO and resume step starts from `dev-trace.js failures` and cites the verbatim error.
 - **Stop check:** while a pipeline is active, if a test, build, lint or type-check command failed in the turn and was never re-run green, the Stop hook blocks once and lists it. The agent then has to fix it or say plainly that it still fails.
 - **Ship Council** receives the trace summary. **Phase 11** reports `N tool calls, F failures (U unresolved)`.
-- **Code you build (IS_AGENTIC):** if the change calls an LLM or runs an agent loop, the design must include an Agent Tracing section (run id, LLM, tool and decision-step spans, error spans, redaction). Gate G2.5c verifies it with a real run.
+- **Nested AI calls:** while a pipeline is active, a headless `claude`/`gemini`/`codex`/`cursor-agent` call without structured output is denied (its internals would be invisible). `agy -p` and other CLIs without a JSON mode are traced for latency and outcome and flagged as "internals not traced".
+- **Code you build (IS_AGENTIC):** if the change calls an LLM through an SDK or spawns a headless AI CLI (`claude -p`, `gemini -p`, `agy -p`, ...), or runs an agent loop, the design must include an Agent Tracing section (run id, LLM, tool and decision-step spans, error spans, redaction). Gate G2.5c verifies it with a real run.
 
 | Variable | Effect |
 |---|---|

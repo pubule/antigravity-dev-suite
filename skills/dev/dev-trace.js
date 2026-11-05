@@ -12,6 +12,10 @@
  *   - pipeline        /dev phase transitions and gate verdicts (from .dev-pipeline-state.json)
  *   - subagents       SubagentStart/Stop + their own tool calls and reasoning
  *   - workflow agents per-agent spans returned by implement-and-review.js
+ *   - nested AI      headless CLI runs (claude -p, gemini -p, agy -p, codex exec, ...):
+ *                    model, turns, tokens, cost, the nested agent's tool calls and
+ *                    errors (parsed from --output-format json/stream-json), and a
+ *                    link to the child session's own trace
  *
  * Storage: one append-only JSONL file per session in `<git-common-dir>/dev-trace/`
  * (shared by every worktree of the repo, never in the working tree, never committed).
@@ -374,6 +378,152 @@ function ingestTranscript(dir, sid, transcriptPath, agent) {
   return emitted;
 }
 
+// ─── nested AI calls: headless CLIs (claude -p, gemini -p, agy -p, codex exec, ...) ──
+
+/**
+ * Headless AI CLIs the agent may shell out to during a /dev run. `headless` decides
+ * whether the invocation is a one-shot non-interactive run; `structured` lists the
+ * output flags that make the run's internals (turns, tool calls, tokens, errors)
+ * parseable; `requireStructured` CLIs are denied at PreToolUse while a pipeline is
+ * active unless such a flag is present, because otherwise the nested agent is a
+ * black box in the trace.
+ */
+const AI_CLIS = {
+  claude: { headless: (a) => a.has('-p') || a.has('--print'), structured: ['--output-format'], requireStructured: true, fix: '--output-format stream-json --verbose (or json)' },
+  gemini: { headless: (a) => a.has('-p') || a.has('--prompt'), structured: ['--output-format', '-o'], requireStructured: true, fix: '--output-format json (or stream-json)' },
+  codex: { headless: (a, t) => t[0] === 'exec' || t[0] === 'e', structured: ['--json', '--experimental-json'], requireStructured: true, fix: 'exec --json' },
+  'cursor-agent': { headless: (a) => a.has('-p') || a.has('--print'), structured: ['--output-format'], requireStructured: true, fix: '--output-format stream-json' },
+  qwen: { headless: (a) => a.has('-p') || a.has('--prompt'), structured: ['--output-format', '-o'], requireStructured: false },
+  agy: { headless: (a) => a.has('-p') || a.has('--print') || a.has('--prompt'), structured: ['--output-format', '--json', '-o'], requireStructured: false },
+  antigravity: { headless: (a) => a.has('-p') || a.has('--print') || a.has('--prompt'), structured: ['--output-format', '--json', '-o'], requireStructured: false },
+  opencode: { headless: (a, t) => t[0] === 'run', structured: ['--format'], requireStructured: false },
+  ollama: { headless: (a, t) => t[0] === 'run', structured: ['--format'], requireStructured: false },
+  aider: { headless: (a) => a.has('-m') || a.has('--message') || a.has('--message-file'), structured: [], requireStructured: false },
+  llm: { headless: () => true, structured: [], requireStructured: false },
+};
+const NPX_ALIASES = { '@anthropic-ai/claude-code': 'claude', '@google/gemini-cli': 'gemini', '@openai/codex': 'codex' };
+
+function shellTokens(segment) {
+  const out = [];
+  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = re.exec(segment))) out.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+  return out;
+}
+
+/** Find headless AI CLI invocations in a shell command. */
+function detectAiCalls(command) {
+  if (typeof command !== 'string' || !command) return [];
+  const found = [];
+  // split on pipes / command separators / subshell openers (quoted text stays inside its segment well enough)
+  for (const seg of command.split(/\|\||&&|[;|\n]|\$\(|`/)) {
+    let toks = shellTokens(seg.trim());
+    while (toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[0]) || ['env', 'time', 'nohup', 'exec', 'sudo', 'command', 'timeout'].includes(toks[0]) || /^\d+[smh]?$/.test(toks[0]))) toks = toks.slice(1);
+    if (!toks.length) continue;
+    let name = path.basename(toks[0]).replace(/\.(cmd|exe|ps1)$/i, '');
+    let rest = toks.slice(1);
+    if (name === 'npx' || name === 'bunx' || name === 'pnpx') {
+      const pkg = rest.find((t) => !t.startsWith('-')) || '';
+      name = NPX_ALIASES[pkg.replace(/@[^@/]*$/, '')] || NPX_ALIASES[pkg] || '';
+      rest = rest.slice(rest.indexOf(pkg) + 1);
+    }
+    const spec = AI_CLIS[name];
+    if (!spec) continue;
+    const flags = new Set(rest.filter((t) => t.startsWith('-')).map((t) => t.split('=')[0]));
+    const positional = rest.filter((t) => !t.startsWith('-'));
+    if (!spec.headless(flags, positional)) continue;
+    const val = (names) => {
+      for (let i = 0; i < rest.length; i++) {
+        const [k, v] = rest[i].split('=');
+        if (names.includes(k)) return v !== undefined ? v : rest[i + 1];
+      }
+      return undefined;
+    };
+    const structuredFlag = spec.structured.find((f) => flags.has(f));
+    const booleanFlag = ['--json', '--experimental-json'].includes(structuredFlag);
+    const format = booleanFlag ? 'json' : structuredFlag ? (val([structuredFlag]) && !String(val([structuredFlag])).startsWith('-') ? val([structuredFlag]) : 'json') : undefined;
+    found.push({
+      cli: name,
+      model: val(['--model', '-m']) && name !== 'aider' ? val(['--model', '-m']) : val(['--model']),
+      output_format: format && format !== 'text' ? format : undefined,
+      structured: !!format && format !== 'text',
+      requireStructured: spec.requireStructured,
+      fix: spec.fix,
+      session_flag: val(['--session-id', '--resume', '-r']),
+    });
+  }
+  return found;
+}
+
+/**
+ * Parse the structured output of a nested AI CLI run (claude json/stream-json,
+ * gemini json/stream-json, codex --json, or any JSONL event stream). Best effort:
+ * returns null when stdout is plain text.
+ */
+function parseAiOutput(stdout) {
+  if (typeof stdout !== 'string' || !stdout.trim()) return null;
+  const docs = [];
+  const whole = stdout.trim();
+  try { docs.push(JSON.parse(whole)); } catch {
+    for (const l of whole.split('\n')) { const t = l.trim(); if (t.startsWith('{')) { try { docs.push(JSON.parse(t)); } catch { /* not json */ } } }
+  }
+  if (!docs.length) return null;
+  const r = { tools: {}, tool_errors: 0 };
+  const addTool = (name) => { if (name) r.tools[name] = (r.tools[name] || 0) + 1; };
+  for (const d of docs) {
+    if (!d || typeof d !== 'object') continue;
+    // Claude Code: final result object
+    if (d.type === 'result' || d.session_id || d.total_cost_usd !== undefined) {
+      if (d.session_id) r.child_session = d.session_id;
+      if (d.num_turns !== undefined) r.turns = d.num_turns;
+      if (d.duration_api_ms !== undefined) r.api_ms = d.duration_api_ms;
+      if (d.total_cost_usd !== undefined) r.cost_usd = d.total_cost_usd;
+      if (d.is_error === true || (d.subtype && d.subtype !== 'success')) r.error = clip(d.subtype || 'error', 200);
+      if (d.usage) { r.in_tok = (d.usage.input_tokens || 0) + (d.usage.cache_read_input_tokens || 0) + (d.usage.cache_creation_input_tokens || 0); r.out_tok = d.usage.output_tokens; }
+      if (d.modelUsage) r.model = Object.keys(d.modelUsage).join(',');
+    }
+    // stream events carrying tool calls (Claude stream-json assistant messages, generic tool_use events)
+    if (d.message && Array.isArray(d.message.content)) for (const b of d.message.content) if (b && b.type === 'tool_use') addTool(b.name);
+    if (d.message && Array.isArray(d.message.content)) for (const b of d.message.content) if (b && b.type === 'tool_result' && b.is_error) r.tool_errors++;
+    if (d.type === 'tool_use' || d.type === 'tool_call') addTool(d.tool_name || d.name || (d.tool && d.tool.name));
+    if ((d.type === 'tool_result' && (d.status === 'error' || d.is_error)) || d.type === 'error') r.tool_errors += d.type === 'error' ? 0 : 1;
+    if (d.type === 'error' || (d.error && typeof d.error === 'object')) r.error = clean((d.error && (d.error.message || d.error.type)) || d.message || 'error', 300);
+    // Gemini CLI json: { response, stats: { models, tools }, error? }
+    if (d.stats && typeof d.stats === 'object') {
+      const models = d.stats.models || {};
+      r.model = Object.keys(models).join(',') || r.model;
+      for (const m of Object.values(models)) {
+        if (m.tokens) { r.in_tok = (r.in_tok || 0) + (m.tokens.prompt || m.tokens.input || 0); r.out_tok = (r.out_tok || 0) + (m.tokens.candidates || m.tokens.output || 0); }
+        if (m.api) { r.api_ms = (r.api_ms || 0) + (m.api.totalLatencyMs || 0); r.api_errors = (r.api_errors || 0) + (m.api.totalErrors || 0); r.turns = (r.turns || 0) + (m.api.totalRequests || 0); }
+      }
+      const t = d.stats.tools;
+      if (t) {
+        r.tool_errors += t.totalFail || 0;
+        for (const [name, v] of Object.entries(t.byName || {})) r.tools[name] = (r.tools[name] || 0) + (v.count || 0);
+      }
+    }
+    // Codex --json usage events
+    if (d.type === 'turn.completed' && d.usage) { r.in_tok = (r.in_tok || 0) + (d.usage.input_tokens || 0); r.out_tok = (r.out_tok || 0) + (d.usage.output_tokens || 0); r.turns = (r.turns || 0) + 1; }
+    if (d.item && (d.item.type === 'command_execution' || d.item.type === 'mcp_tool_call') && d.type === 'item.completed') addTool(d.item.type === 'mcp_tool_call' ? d.item.tool : 'shell');
+  }
+  return r;
+}
+
+function aiCliGuard(input) {
+  if (process.env.DEV_TRACE_GATE === '0') return null;
+  if (input.tool_name !== 'Bash' && input.tool_name !== 'PowerShell') return null;
+  if (!findPipelineState(input.cwd)) return null;
+  const bad = detectAiCalls(input.tool_input && input.tool_input.command).filter((c) => c.requireStructured && !c.structured);
+  if (!bad.length) return null;
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: `dev-trace: headless AI call without structured output — its tool calls, tokens and errors would be invisible in the trace. Re-run with ${bad.map((c) => `${c.cli} ${c.fix}`).join('; ')}. Keep the raw JSON on stdout (or tee it to a file) so the trace can parse it.`,
+    },
+  };
+}
+
 // ─── pipeline phases and gates ──────────────────────────────────────
 
 function gateSnapshot(state) {
@@ -415,6 +565,25 @@ function touchesPipelineState(tool, input) {
   return (tool === 'Bash' || tool === 'PowerShell') && typeof input.command === 'string' && input.command.includes('.dev-pipeline-state.json');
 }
 
+function recordAiCalls(dir, sid, input, ok, resp) {
+  if (input.tool_name !== 'Bash' && input.tool_name !== 'PowerShell') return;
+  const calls = detectAiCalls(input.tool_input && input.tool_input.command);
+  if (!calls.length) return;
+  const stdout = resp && typeof resp === 'object' ? resp.stdout : typeof resp === 'string' ? resp : undefined;
+  const parsed = calls.length === 1 ? parseAiOutput(stdout) : null;
+  for (const c of calls) {
+    append(dir, sid, {
+      ev: 'ai.cli', id: input.tool_use_id, cli: c.cli, model: (parsed && parsed.model) || c.model,
+      output_format: c.output_format, structured: c.structured, parsed: !!parsed,
+      ok: ok && !(parsed && parsed.error), error: !ok ? clean(input.error || 'failed', limits().error) : parsed && parsed.error ? parsed.error : undefined,
+      child_session: parsed && parsed.child_session, turns: parsed && parsed.turns, api_ms: parsed && parsed.api_ms,
+      in_tok: parsed && parsed.in_tok, out_tok: parsed && parsed.out_tok, cost_usd: parsed && parsed.cost_usd,
+      tools: parsed && Object.keys(parsed.tools).length ? parsed.tools : undefined,
+      tool_errors: parsed && parsed.tool_errors ? parsed.tool_errors : undefined,
+    });
+  }
+}
+
 // ─── analysis (shared by the CLI and the Stop gate) ─────────────────
 
 function readEvents(file) {
@@ -434,6 +603,7 @@ function analyze(events) {
   const phases = [];
   const gates = [];
   const workflow = [];
+  const aiCalls = [];
   const subagents = new Map();
   const prompts = [];
   let first = null;
@@ -480,6 +650,7 @@ function analyze(events) {
       case 'phase': phases.push(e); break;
       case 'gate': gates.push(e); break;
       case 'workflow.span': workflow.push(e); break;
+      case 'ai.cli': aiCalls.push(e); break;
       case 'subagent.start': subagents.set(e.agent_id, { id: e.agent_id, type: e.agent_type, start: e.t }); break;
       case 'subagent.end': {
         const s = subagents.get(e.agent_id) || { id: e.agent_id, type: e.agent_type };
@@ -499,7 +670,11 @@ function analyze(events) {
   calls.sort((a, b) => (a.start || a.end || 0) - (b.start || b.end || 0));
   calls.forEach((c, i) => { c.n = i + 1; });
 
-  return { first, last, cwd, calls, llm, phases, gates, workflow, subagents: [...subagents.values()], prompts };
+  for (const x of aiCalls) {
+    const c = tools.get(x.id);
+    if (c) { x.dur_ms = c.end && c.start ? c.end - c.start : null; x.start = c.start; if (c.ok === false) { x.ok = false; x.error = x.error || c.error; } }
+  }
+  return { first, last, cwd, calls, llm, phases, gates, workflow, aiCalls, subagents: [...subagents.values()], prompts };
 }
 
 const VERIFY_RE = /\b(test|tests|spec|pytest|jest|vitest|mocha|ava|tap|go\s+(test|build|vet)|cargo\s+(test|build|check|clippy)|npm\s+(run\s+)?(test|build|lint|typecheck|check)|pnpm\s+(run\s+)?(test|build|lint|typecheck)|yarn\s+(test|build|lint|typecheck)|npx\s+(tsc|jest|vitest|eslint|playwright|impeccable)|tsc|eslint|ruff|mypy|pyright|flake8|gradle|gradlew|mvn|make|dotnet\s+(test|build)|ctest|rspec|phpunit|playwright|tox|nox)\b/i;
@@ -589,15 +764,18 @@ function handleHook(input) {
       ingestTranscript(dir, sid, input.transcript_path);
       append(dir, sid, { ev: 'prompt', cwd, prompt: clean(input.prompt, Math.min(limits().reason || 200, 400)) });
       return null;
-    case 'PreToolUse':
-      append(dir, sid, { ev: 'tool.start', id: input.tool_use_id, tool: input.tool_name, agent, input: summarizeInput(input.tool_name, input.tool_input) });
-      return null;
+    case 'PreToolUse': {
+      const denied = aiCliGuard(input);
+      append(dir, sid, { ev: 'tool.start', id: input.tool_use_id, tool: input.tool_name, agent, input: summarizeInput(input.tool_name, input.tool_input), denied: denied ? 'unstructured-ai-cli' : undefined });
+      return denied;
+    }
     case 'PostToolUse': {
       const failure = responseFailure(input.tool_name, input.tool_response);
       append(dir, sid, {
         ev: 'tool.end', id: input.tool_use_id, tool: input.tool_name, agent,
         ok: !failure, error: failure || undefined, out_bytes: responseSize(input.tool_response),
       });
+      recordAiCalls(dir, sid, input, true, input.tool_response);
       if (input.tool_name === 'Workflow') {
         const dt = findDevTrace(input.tool_response);
         if (dt) {
@@ -618,6 +796,7 @@ function handleHook(input) {
       return null;
     }
     case 'PostToolUseFailure':
+      recordAiCalls(dir, sid, input, false, null);
       append(dir, sid, {
         ev: 'tool.end', id: input.tool_use_id, tool: input.tool_name, agent, ok: false,
         interrupt: input.is_interrupt || undefined, error: clean(input.error || 'failed', limits().error),
@@ -731,6 +910,7 @@ function summaryData(events, sid) {
     slowest: [...a.calls].filter((c) => c.dur_ms !== null).sort((x, y) => y.dur_ms - x.dur_ms).slice(0, 5),
     slowestLlm: [...a.llm].filter((e) => e.dur_ms).sort((x, y) => y.dur_ms - x.dur_ms).slice(0, 3),
     unresolved: unresolvedVerificationFailures(events),
+    aiCalls: a.aiCalls,
   };
 }
 
@@ -755,6 +935,19 @@ function printSummary(d) {
     p(`Tools:${' '.repeat(w - 4)}calls  fail   total     avg     p95     max`);
     for (const r of d.toolStats) {
       p(`  ${r.tool.padEnd(w)}${String(r.calls).padStart(5)}${String(r.fail).padStart(6)}${fmtDur(r.total_ms).padStart(8)}${fmtDur(r.avg_ms).padStart(8)}${fmtDur(r.p95_ms).padStart(8)}${fmtDur(r.max_ms).padStart(8)}`);
+    }
+  }
+  if (d.aiCalls.length) {
+    p('');
+    p('Nested AI calls (headless CLIs):');
+    for (const x of d.aiCalls) {
+      const parts = [x.model, x.turns !== undefined ? `${x.turns} turns` : null, x.in_tok !== undefined ? `${x.in_tok} in / ${x.out_tok || 0} out tok` : null,
+        x.cost_usd !== undefined ? `$${Number(x.cost_usd).toFixed(4)}` : null,
+        x.tools ? 'tools ' + Object.entries(x.tools).map(([k, v]) => `${k}×${v}`).join(' ') : null,
+        x.tool_errors ? `${x.tool_errors} tool errors` : null].filter(Boolean).join(', ');
+      p(`  ${x.ok === false ? '✗' : '✓'} ${x.cli.padEnd(8)} ${fmtDur(x.dur_ms).padStart(7)}  ${parts}${x.error ? '  error: ' + clip(String(x.error).split('\n')[0], 120) : ''}`);
+      if (!x.parsed) p(`      ⚠ internals not traced — ${x.structured ? 'structured output was not on stdout' : 'no structured output flag'}`);
+      if (x.child_session) p(`      child trace: node dev-trace.js summary ${x.child_session}${d.childSessions && d.childSessions.includes(x.child_session) ? '' : '  (no trace file here: the child ran without the dev plugin or in another repo)'}`);
     }
   }
   if (d.workflow.length) {
@@ -863,13 +1056,17 @@ function toOtlp(events, sid) {
   });
   spans.push(...phaseSpans);
   const parentAt = (t) => { const ph = phaseSpans.find((s) => t >= s._start && t < s._end); return ph ? ph.spanId : rootId; };
+  const aiById = new Map(a.aiCalls.map((x) => [x.id, x]));
   for (const c of a.calls) {
     const start = c.start || c.end;
+    const ai = aiById.get(c.id);
     const end = c.end || c.start;
     spans.push({
       traceId, spanId: hex(sid + ':' + c.id, 16), parentSpanId: parentAt(start), name: `execute_tool ${c.tool}`, kind: 1,
       startTimeUnixNano: ns(start), endTimeUnixNano: ns(end),
-      attributes: attr({ 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': c.tool, 'gen_ai.tool.call.id': c.id, 'dev.input': describeInput(c), 'dev.reasoning': c.reasoning ? clip(c.reasoning, 2000) : undefined, 'dev.subagent': c.agent, 'error.type': c.ok === false ? 'tool_error' : undefined }),
+      attributes: attr({ 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': c.tool, 'gen_ai.tool.call.id': c.id, 'dev.input': describeInput(c), 'dev.reasoning': c.reasoning ? clip(c.reasoning, 2000) : undefined, 'dev.subagent': c.agent, 'error.type': c.ok === false ? 'tool_error' : undefined,
+        'dev.ai_cli': ai && ai.cli, 'gen_ai.request.model': ai && ai.model, 'gen_ai.usage.input_tokens': ai && ai.in_tok, 'gen_ai.usage.output_tokens': ai && ai.out_tok,
+        'dev.ai_cli.turns': ai && ai.turns, 'dev.ai_cli.child_session': ai && ai.child_session, 'dev.ai_cli.tools': ai && ai.tools ? JSON.stringify(ai.tools) : undefined }),
       status: c.ok === false ? { code: 2, message: clip(c.error || 'failed', 500) } : { code: 1 },
     });
   }
@@ -941,6 +1138,7 @@ function cli(argv) {
     case 'summary': {
       const s = pick();
       const d = summaryData(readEvents(s.file), s.sid);
+      d.childSessions = listSessions(dir).map((x) => x.sid);
       if (flags.has('--json')) console.log(JSON.stringify(d, null, 2)); else printSummary(d);
       return 0;
     }
@@ -965,6 +1163,7 @@ function cli(argv) {
 module.exports = {
   handleHook, analyze, readEvents, summaryData, toOtlp, redact, summarizeInput, traceDir, gitCommonDir,
   unresolvedVerificationFailures, ingestTranscript, findDevTrace, sessionFile, VERIFY_RE,
+  detectAiCalls, parseAiOutput,
 };
 
 if (require.main === module) {

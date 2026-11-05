@@ -224,3 +224,76 @@ test('malformed hook input never breaks the session', () => {
   assert.strictEqual(r.status, 0);
   assert.strictEqual(r.stdout, '');
 });
+
+test('detects headless AI CLI calls and their output format', () => {
+  const d = (c) => T.detectAiCalls(c).map((x) => `${x.cli}:${x.structured ? x.output_format : 'raw'}`);
+  assert.deepStrictEqual(d('claude -p "fix it" --output-format stream-json --verbose'), ['claude:stream-json']);
+  assert.deepStrictEqual(d('cd app && gemini -p "summarize" -o json | jq .response'), ['gemini:json']);
+  assert.deepStrictEqual(d('agy -p "refactor"'), ['agy:raw']);
+  assert.deepStrictEqual(d('FOO=1 timeout 60 npx @anthropic-ai/claude-code --print hi'), ['claude:raw']);
+  assert.deepStrictEqual(d('codex exec --json "do it"'), ['codex:json']);
+  assert.deepStrictEqual(d('claude --version; gemini --help; echo claude -p'), []);
+  assert.strictEqual(T.detectAiCalls('claude -p x --model sonnet')[0].model, 'sonnet');
+});
+
+test('parses Claude json, Claude stream-json and Gemini json results', () => {
+  const c = T.parseAiOutput(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, duration_api_ms: 4000, num_turns: 3, session_id: 'child-1', total_cost_usd: 0.012, usage: { input_tokens: 10, cache_read_input_tokens: 90, output_tokens: 50 } }));
+  assert.strictEqual(c.child_session, 'child-1');
+  assert.strictEqual(c.turns, 3);
+  assert.strictEqual(c.in_tok, 100);
+  assert.strictEqual(c.error, undefined);
+
+  const stream = [
+    { type: 'system', subtype: 'init', session_id: 'child-2' },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', id: 't1' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: true }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', id: 't2' }] } },
+    { type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 10, session_id: 'child-2' },
+  ].map((x) => JSON.stringify(x)).join('\n');
+  const s = T.parseAiOutput(stream);
+  assert.deepStrictEqual(s.tools, { Bash: 1, Edit: 1 });
+  assert.strictEqual(s.tool_errors, 1);
+  assert.match(s.error, /error_max_turns/);
+
+  const g = T.parseAiOutput(JSON.stringify({ response: 'ok', stats: { models: { 'gemini-2.5-pro': { api: { totalRequests: 2, totalErrors: 0, totalLatencyMs: 3100 }, tokens: { prompt: 500, candidates: 80 } } }, tools: { totalCalls: 3, totalFail: 1, byName: { read_file: { count: 2 }, run_shell_command: { count: 1 } } } } }));
+  assert.strictEqual(g.model, 'gemini-2.5-pro');
+  assert.strictEqual(g.in_tok, 500);
+  assert.strictEqual(g.tool_errors, 1);
+  assert.deepStrictEqual(g.tools, { read_file: 2, run_shell_command: 1 });
+
+  assert.strictEqual(T.parseAiOutput('just some text'), null);
+});
+
+test('nested AI calls are recorded, linked to the child trace, and unstructured ones denied inside a pipeline', () => {
+  const sb = sandbox();
+  // outside a pipeline: never denied, but still traced
+  const cmd = 'gemini -p "review the diff"';
+  assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'g0', tool_input: { command: cmd } }), null);
+
+  fs.writeFileSync(path.join(sb.repo, '.dev-pipeline-state.json'), '{"currentPhase":5}');
+  const deny = hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'g1', tool_input: { command: cmd } });
+  assert.strictEqual(deny.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(deny.hookSpecificOutput.permissionDecisionReason, /--output-format json/);
+  assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'a1', tool_input: { command: 'agy -p "x"' } }), null, 'agy: traced, not denied');
+  assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'g1', tool_input: { command: cmd } }, { DEV_TRACE_GATE: '0' }), null);
+
+  const ccmd = 'claude -p "write tests" --output-format json';
+  assert.strictEqual(hook(sb, 'PreToolUse', { tool_name: 'Bash', tool_use_id: 'c1', tool_input: { command: ccmd } }), null);
+  hook(sb, 'PostToolUse', { tool_name: 'Bash', tool_use_id: 'c1', tool_input: { command: ccmd }, tool_response: { stdout: JSON.stringify({ type: 'result', subtype: 'success', num_turns: 4, session_id: 'child-9', total_cost_usd: 0.02, usage: { input_tokens: 100, output_tokens: 7 } }), stderr: '' } });
+  hook(sb, 'PostToolUse', { tool_name: 'Bash', tool_use_id: 'a1', tool_input: { command: 'agy -p "x"' }, tool_response: { stdout: 'done', stderr: '' } });
+  // the child session wrote its own trace into the same directory
+  hook(sb, 'SessionStart', { session_id: 'child-9', source: 'startup' });
+
+  const a = T.analyze(T.readEvents(path.join(sb.traces, 'sess-1.jsonl')));
+  const c = a.aiCalls.find((x) => x.id === 'c1');
+  assert.strictEqual(c.child_session, 'child-9');
+  assert.strictEqual(c.turns, 4);
+  assert.ok(c.dur_ms >= 0);
+  assert.strictEqual(a.aiCalls.find((x) => x.id === 'a1').parsed, false);
+
+  const r = cli(sb, ['summary', 'sess-1']);
+  assert.match(r.stdout, /Nested AI calls/);
+  assert.match(r.stdout, /claude .*4 turns/);
+  assert.match(r.stdout, /child trace: node dev-trace.js summary child-9\n/);
+  assert.match(r.stdout, /agy[\s\S]*internals not traced/);
+});

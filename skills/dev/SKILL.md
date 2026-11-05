@@ -143,7 +143,12 @@ When IS_GREENFIELD:
 - Phase 3 plan MUST contain an **Errors & Observability** task group.
 - Phase 8.5 runs the **Resilience & Observability checklist** as a blocking sub-gate (G2.5b).
 
-**IS_AGENTIC trigger:** set when the change adds or modifies code that calls an LLM (any provider SDK or HTTP API), runs a tool-calling / agent loop, orchestrates sub-agents, does retrieval for a model, or defines tools/MCP servers for a model. When IS_AGENTIC:
+**IS_AGENTIC trigger:** set when the change adds or modifies code that calls an LLM in any form:
+- **SDK / HTTP API:** Anthropic, Claude Agent SDK, OpenAI, Google GenAI, Vercel AI SDK, LangChain/LangGraph, LlamaIndex, or direct HTTP calls to a model endpoint.
+- **Headless AI CLI as a subprocess:** `claude -p`, `gemini -p`, `agy -p`, `codex exec`, `cursor-agent -p`, `ollama run`, etc., from code, scripts, Makefiles, CI jobs or git hooks.
+- **Agent constructs:** a tool-calling / agent loop, sub-agent orchestration, retrieval for a model, or tool / MCP server definitions for a model.
+
+Grep the diff for SDK imports and for these CLI names in `spawn`/`exec`/`subprocess`/shell lines. When in doubt, set it. When IS_AGENTIC:
 - Phase 1 design doc MUST contain an **Agent Tracing** section (§Agent Tracing Design).
 - Phase 3 plan MUST contain a **Tracing** task group (tracer setup first, then spans per LLM call / tool call / step, then failure-path tests that assert the error span exists).
 - Phase 8.5 runs the **Agent Tracing checklist** as blocking sub-gate G2.5c.
@@ -165,6 +170,7 @@ Stop guessing what the agent did. Every session with the `dev` plugin installed 
 | Reasoning step before each tool call (visible thinking/text) | transcript | "Why did it decide to do that?" |
 | Pipeline phases and gate verdicts | writes to `.dev-pipeline-state.json` | "Which phase was it in when it went wrong? Was the gate really GO?" |
 | Subagents and Workflow agents (per-agent duration + outcome) | `SubagentStart/Stop` + `devTrace` returned by `implement-and-review.js` | "Which parallel agent failed or stalled?" |
+| Nested AI calls run from the shell: `claude -p`, `gemini -p`, `agy -p`, `codex exec`, `cursor-agent -p`, ... — model, turns, tokens, cost, the nested agent's own tool calls and errors, link to the child session's trace | Bash hooks + parsing of `--output-format json/stream-json` | "What did the model I called from the shell actually do, and why did it fail?" |
 
 Storage: `<git-common-dir>/dev-trace/<session>.jsonl` (shared by all worktrees, never in the working tree, never committed). Secrets are redacted and file contents are never stored. Retention 14 days.
 
@@ -182,7 +188,12 @@ node <skill_dir>/dev-trace.js export [session] > trace.json            # OTLP/JS
 2. **Narrate decisions in one line.** Hidden thinking is not always persisted, so the trace's "why" comes from what you write. Before each phase entry, each fix and each gate verdict, write one visible line: `Decision: <what> — because <evidence>`. It costs a sentence and makes every later diagnosis possible.
 3. **The last run counts.** A verification command (tests, build, lint, type check) whose last run in the turn is red is red. The Stop hook enforces it: if one failed and was never re-run green, it blocks once and lists them. Fix and re-run the SAME command, or say plainly that it still fails and record it in `HANDOFF.md`.
 4. **Never claim a result the trace contradicts.** "Tests pass", "build is green", "council said GO" must match the trace. If they do not, the trace wins.
-5. **Tracing stays on.** Do not set `DEV_TRACE=0` or `DEV_TRACE_GATE=0` yourself; only the user can, and it is recorded as a waiver.
+5. **Nested AI calls are traced too.** When you call another model from the shell during the pipeline (second opinions, councils, code generation with `claude -p`, `gemini -p`, `agy -p`, `codex exec`):
+   - always request structured output (`claude -p … --output-format stream-json --verbose` or `json`; `gemini -p … --output-format json`; `codex exec --json`) and keep that JSON on stdout or `tee` it, so the trace can parse turns, tokens, tool calls and errors. While a pipeline is active the PreToolUse hook **denies** `claude`/`gemini`/`codex`/`cursor-agent` headless calls without it;
+   - for CLIs without a structured mode (e.g. `agy -p` today): never discard stderr, never `|| true`, set a timeout, and check the exit code. The trace records latency and outcome and flags the call as "internals not traced";
+   - run them from the project directory so a nested `claude -p` writes its own trace next to yours (`summary` links it as the child session);
+   - after the call, check `dev-trace.js summary` → *Nested AI calls* before using the output. A nested run that hit `error_max_turns` or had tool errors is not a valid answer.
+6. **Tracing stays on.** Do not set `DEV_TRACE=0` or `DEV_TRACE_GATE=0` yourself; only the user can, and it is recorded as a waiver.
 
 ---
 
@@ -323,8 +334,9 @@ Code that drives an LLM must be diagnosable the same way this pipeline is: from 
 7. **Cost & limits** — token totals per run, and the configured max iterations / timeout / budget recorded on the run span.
 8. **Sampling & privacy** — sampling rate and content capture are configuration, with secrets/PII redacted centrally before export.
 9. **Tests** — at least one test runs the agent with a failing tool (or a mocked failing LLM call) and asserts the error span and the run id exist.
+10. **AI CLI subprocesses** (`claude -p`, `gemini -p`, `agy -p`, `codex exec`, ...): each invocation is a span (CLI, model, args redacted, exit code, duration, timeout); the CLI runs with its structured output mode (`--output-format stream-json`/`json`, `codex exec --json`) and the wrapper parses it into child spans/attributes: turns, tokens, cost, the nested agent's tool calls, `is_error`/`subtype` (e.g. `error_max_turns`); stderr is captured, never discarded; a hard timeout kills the process tree; the run id is passed down (env var, or `--session-id` for Claude) and the child session id is recorded on the span. For a CLI without a structured mode, record exit code + stderr tail + duration and say so in the design.
 
-Proportionality: a single LLM call in a script needs 2, 3, 6; an agent loop with tools needs all 9.
+Proportionality: a single LLM call in a script needs 2, 3, 6 (plus 10 if it is a CLI subprocess); an agent loop with tools needs all of them.
 
 ## Phase 2: Design Council (complex only)
 
@@ -468,6 +480,10 @@ Verify the implemented code against §Agent Tracing Design. Read the changed fil
 | Retries not visible (each attempt should be its own span or a counted attribute) | WARNING |
 | No test asserting that a failing tool or LLM call produces an error span | WARNING |
 | Tracing cannot be disabled or sampled via configuration | WARNING |
+| AI CLI subprocess (`claude -p`, `gemini -p`, `agy -p`, `codex exec`, ...) with no span, exit code ignored, or stderr discarded | CRITICAL |
+| AI CLI subprocess with no timeout | CRITICAL |
+| AI CLI that supports structured output run in text mode, so its turns / tool calls / errors cannot be traced | WARNING |
+| Child session id / nested run id not recorded on the span | WARNING |
 
 Update state:
 ```json
